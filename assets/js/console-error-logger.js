@@ -109,12 +109,15 @@
         
         // Process one error at a time to avoid overwhelming the server
         const error = CEL.errorQueue.shift();
+        console.log('CEL: Processing error from queue:', error); // Debug log
         
         // Add session and page information
         error.session_id = getSessionId();
         error.page_url = window.location.href;
         error.user_agent = navigator.userAgent;
         error.is_login_page = cel_ajax.is_login_page;
+        
+        console.log('CEL: Sending AJAX request to:', cel_ajax.ajax_url); // Debug log
         
         // Send to server
         $.ajax({
@@ -124,6 +127,12 @@
                 action: 'cel_log_error',
                 nonce: cel_ajax.nonce,
                 error_data: JSON.stringify(error)
+            },
+            success: function(response) {
+                console.log('CEL: AJAX Success:', response); // Debug log
+            },
+            error: function(xhr, status, errorMsg) {
+                console.log('CEL: AJAX Error:', status, errorMsg, xhr.responseText); // Debug log
             },
             complete: function() {
                 CEL.isProcessing = false;
