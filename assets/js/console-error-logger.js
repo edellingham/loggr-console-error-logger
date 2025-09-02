@@ -66,6 +66,8 @@
     
     // Log error to server with improved validation
     function logError(errorData) {
+        console.log('CEL: logError called with:', errorData); // Debug log
+        
         // Validate input
         if (!errorData || typeof errorData !== 'object') {
             console.warn('Console Error Logger: Invalid error data provided');
@@ -311,6 +313,8 @@
     
     // Monitor resource loading errors
     window.addEventListener('error', function(event) {
+        console.log('CEL: Error event captured:', event); // Debug log
+        
         // Check if this is a resource loading error (not a JavaScript error)
         if (event.target !== window && event.target.tagName) {
             const target = event.target;
@@ -336,6 +340,8 @@
             }
             
             if (resourceUrl) {
+                console.log('CEL: Logging resource error:', resourceUrl); // Debug log
+                
                 const errorData = {
                     error_type: 'resource_error',
                     error_message: `Failed to load ${resourceType}: ${resourceUrl}`,
