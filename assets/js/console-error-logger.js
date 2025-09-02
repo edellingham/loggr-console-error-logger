@@ -130,6 +130,9 @@
             },
             success: function(response) {
                 console.log('CEL: AJAX Success:', response); // Debug log
+                if (!response.success && response.data && response.data.message) {
+                    console.error('CEL: Server error:', response.data.message);
+                }
             },
             error: function(xhr, status, errorMsg) {
                 console.log('CEL: AJAX Error:', status, errorMsg, xhr.responseText); // Debug log
