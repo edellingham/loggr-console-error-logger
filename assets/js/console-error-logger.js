@@ -74,6 +74,12 @@
             return;
         }
         
+        // Prevent infinite loops - don't log errors from our own plugin
+        if (errorData.error_message && errorData.error_message.includes('CEL:')) {
+            console.warn('Console Error Logger: Skipping CEL-related error to prevent infinite loop');
+            return;
+        }
+        
         // Check rate limiting
         if (isRateLimited()) {
             console.warn('Console Error Logger: Rate limit exceeded, skipping error log');
@@ -131,7 +137,8 @@
             success: function(response) {
                 console.log('CEL: AJAX Success:', response); // Debug log
                 if (!response.success && response.data && response.data.message) {
-                    console.error('CEL: Server error:', response.data.message);
+                    // Don't log server errors as new errors (prevents infinite loop)
+                    console.warn('CEL: Server error (not logging as error):', response.data.message);
                 }
             },
             error: function(xhr, status, errorMsg) {

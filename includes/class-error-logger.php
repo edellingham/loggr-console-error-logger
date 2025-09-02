@@ -67,7 +67,17 @@ class CEL_Error_Logger {
                 'error_id' => $this->database->get_table_name()
             ));
         } else {
-            wp_send_json_error(array('message' => __('Failed to log error', 'console-error-logger')));
+            // Get more detailed error information
+            global $wpdb;
+            $db_error = $wpdb->last_error;
+            $error_message = __('Failed to log error', 'console-error-logger');
+            
+            if (!empty($db_error)) {
+                $error_message .= ': ' . $db_error;
+                error_log('Console Error Logger: Database error - ' . $db_error);
+            }
+            
+            wp_send_json_error(array('message' => $error_message));
         }
     }
     
