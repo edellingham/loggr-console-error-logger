@@ -528,6 +528,44 @@
         }
         CEL.initialized = true;
         console.log('Console Error Logger initialized successfully');
+        console.log('CEL: Configuration:', cel_ajax);
+        
+        // Add test functions to window for manual testing
+        window.CEL_Test = {
+            triggerJSError: function() {
+                console.log('CEL: Triggering JavaScript error...');
+                nonExistentFunction();
+            },
+            
+            triggerConsoleError: function() {
+                console.log('CEL: Triggering console error...');
+                console.error('Test console error message');
+            },
+            
+            triggerResourceError: function() {
+                console.log('CEL: Triggering resource error...');
+                const img = document.createElement('img');
+                img.src = '/test-broken-image-' + Date.now() + '.jpg';
+                document.body.appendChild(img);
+            },
+            
+            triggerAjaxError: function() {
+                console.log('CEL: Triggering AJAX error...');
+                $.ajax({
+                    url: '/nonexistent-endpoint-' + Date.now(),
+                    type: 'POST',
+                    data: {test: 'data'}
+                });
+            },
+            
+            checkStatus: function() {
+                console.log('CEL: Error queue length:', CEL.errorQueue.length);
+                console.log('CEL: Rate limit counter:', CEL.rateLimitCounter);
+                console.log('CEL: Is processing:', CEL.isProcessing);
+            }
+        };
+        
+        console.log('CEL: Test functions available as CEL_Test.*');
     }
     
     // Initialize when DOM is ready or immediately if already ready
