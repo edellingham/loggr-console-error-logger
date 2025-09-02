@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Error Logger Test Page</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <h1>Console Error Logger Test Page</h1>
+    
+    <p>Use this page to test different types of errors. Open your browser's developer tools to see the console output.</p>
+    
+    <div>
+        <h2>Test Buttons</h2>
+        <button onclick="testJavaScriptError()">Test JavaScript Error</button>
+        <button onclick="testConsoleError()">Test Console Error</button>
+        <button onclick="testAJAXError()">Test AJAX Error</button>
+        <button onclick="testResourceError()">Test Resource Error</button>
+        <button onclick="testPromiseError()">Test Promise Error</button>
+    </div>
+    
+    <div id="results"></div>
+    
+    <script>
+        function testJavaScriptError() {
+            console.log('Testing JavaScript error...');
+            // This will throw an error
+            nonExistentFunction();
+        }
+        
+        function testConsoleError() {
+            console.log('Testing console.error...');
+            console.error('This is a test console error message');
+        }
+        
+        function testAJAXError() {
+            console.log('Testing AJAX error...');
+            $.ajax({
+                url: '/this-endpoint-does-not-exist',
+                type: 'POST',
+                data: { test: 'data' },
+                error: function(xhr, status, error) {
+                    console.log('AJAX error occurred:', error);
+                }
+            });
+        }
+        
+        function testResourceError() {
+            console.log('Testing resource error...');
+            // This will create a script tag that fails to load
+            const script = document.createElement('script');
+            script.src = '/nonexistent-script.js';
+            document.head.appendChild(script);
+        }
+        
+        function testPromiseError() {
+            console.log('Testing Promise error...');
+            // This will create an unhandled promise rejection
+            Promise.reject(new Error('Test promise rejection'));
+        }
+        
+        // Check if Console Error Logger is loaded
+        window.addEventListener('load', function() {
+            if (typeof cel_ajax !== 'undefined') {
+                document.getElementById('results').innerHTML = 
+                    '<p style="color: green;">✅ Console Error Logger JavaScript is loaded and active!</p>';
+            } else {
+                document.getElementById('results').innerHTML = 
+                    '<p style="color: red;">❌ Console Error Logger JavaScript is NOT loaded. Check plugin activation and settings.</p>';
+            }
+        });
+    </script>
+</body>
+</html>
