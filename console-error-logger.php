@@ -171,8 +171,13 @@ class Console_Error_Logger {
     public function enqueue_frontend_scripts() {
         $settings = get_option('cel_settings', array());
         
-        // Only load on frontend if site monitoring is enabled
+        // Load on frontend if site monitoring is enabled
         if (!empty($settings['enable_site_monitoring']) && !is_admin()) {
+            $this->enqueue_error_logger_script(false);
+        }
+        
+        // Also load on admin pages for diagnostic purposes
+        if (is_admin() && isset($_GET['page']) && $_GET['page'] === 'console-error-logger') {
             $this->enqueue_error_logger_script(false);
         }
     }
