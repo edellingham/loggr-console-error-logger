@@ -264,6 +264,22 @@ class CEL_Database {
     }
     
     /**
+     * Get last error timestamp
+     */
+    public function get_last_error_time() {
+        return $this->wpdb->get_var(
+            "SELECT timestamp FROM {$this->table_name} ORDER BY timestamp DESC LIMIT 1"
+        );
+    }
+    
+    /**
+     * Get table name
+     */
+    public function get_table_name() {
+        return $this->table_name;
+    }
+    
+    /**
      * Clear all error logs
      */
     public function clear_all_logs() {

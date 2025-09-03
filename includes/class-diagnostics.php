@@ -28,7 +28,7 @@ class CEL_Diagnostics {
      */
     public function add_debug_menu() {
         add_submenu_page(
-            'cel-errors',
+            'console-error-logger',
             __('Error Logger Diagnostics', 'console-error-logger'),
             __('🔧 Diagnostics', 'console-error-logger'),
             'manage_options',
@@ -503,5 +503,23 @@ class CEL_Diagnostics {
         wp_send_json_success(array(
             'new_entries' => array()
         ));
+    }
+    
+    /**
+     * Make process_error_data method accessible for testing
+     */
+    public function process_error_data($data) {
+        $error_logger = new CEL_Error_Logger();
+        return $this->call_private_method($error_logger, 'process_error_data', array($data));
+    }
+    
+    /**
+     * Call private method via reflection for testing
+     */
+    private function call_private_method($object, $method_name, $parameters = array()) {
+        $reflection = new ReflectionClass(get_class($object));
+        $method = $reflection->getMethod($method_name);
+        $method->setAccessible(true);
+        return $method->invokeArgs($object, $parameters);
     }
 }
