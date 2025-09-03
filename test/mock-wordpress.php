@@ -16,10 +16,30 @@ class wpdb {
     public $last_error = '';
     private $errors = [];
     private $queries = [];
+    private $data_file;
     
     public function __construct() {
-        // Use in-memory storage for simplicity
-        $this->errors = [];
+        // Use file-based storage to persist between requests
+        $this->data_file = __DIR__ . '/test_errors.json';
+        $this->load_errors();
+    }
+    
+    private function load_errors() {
+        if (file_exists($this->data_file)) {
+            $content = file_get_contents($this->data_file);
+            $data = json_decode($content, true);
+            if ($data && is_array($data)) {
+                $this->errors = array_map(function($item) {
+                    return (object)$item;
+                }, $data);
+            }
+        } else {
+            $this->errors = [];
+        }
+    }
+    
+    private function save_errors() {
+        file_put_contents($this->data_file, json_encode($this->errors, JSON_PRETTY_PRINT));
     }
     
     public function insert($table, $data, $format = null) {
@@ -27,14 +47,24 @@ class wpdb {
         $data['id'] = count($this->errors) + 1;
         $data['timestamp'] = date('Y-m-d H:i:s');
         
-        // Store in memory
+        // Store in memory and file
         $this->errors[] = (object)$data;
+        $this->save_errors();
         $this->queries[] = "INSERT INTO $table";
+        
+        // Debug logging
+        error_log("WPDB INSERT: " . json_encode($data));
+        error_log("WPDB ERRORS COUNT: " . count($this->errors));
+        
         return true;
     }
     
     public function get_results($query) {
         $this->queries[] = $query;
+        
+        // Debug logging
+        error_log("WPDB GET_RESULTS: $query");
+        error_log("WPDB CURRENT ERRORS: " . json_encode($this->errors));
         
         // Simple query parsing for testing
         if (strpos($query, 'SELECT * FROM wp_console_errors') !== false) {
@@ -52,6 +82,7 @@ class wpdb {
                 $results = array_slice($results, 0, $limit);
             }
             
+            error_log("WPDB RETURNING: " . json_encode($results));
             return $results;
         }
         
@@ -111,6 +142,7 @@ class wpdb {
         
         if (strpos($query, 'DELETE FROM wp_console_errors') !== false) {
             $this->errors = [];
+            $this->save_errors();
             return true;
         }
         

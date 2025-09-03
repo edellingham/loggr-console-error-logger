@@ -1,0 +1,36 @@
+[
+    {
+        "timestamp": "2025-09-03 17:08:58",
+        "error_type": "javascript_error",
+        "error_message": "Error: Test JavaScript Error: This is a deliberate error for testing",
+        "error_source": "http:\/\/localhost:8080\/",
+        "error_line": 414,
+        "error_column": 19,
+        "stack_trace": "testJavaScriptError@http:\/\/localhost:8080\/:414:19nonclick@http:\/\/localhost:8080\/:1:1n",
+        "user_agent": "Mozilla\/5.0 (X11; Linux x86_64; rv:142.0) Gecko\/20100101 Firefox\/142.0",
+        "page_url": "http:\/\/localhost:8080\/",
+        "user_ip": "127.0.0.1",
+        "user_id": 1,
+        "session_id": "cel_1756919338641_y6fba11lz3428",
+        "is_login_page": false,
+        "additional_data": null,
+        "id": 1
+    },
+    {
+        "timestamp": "2025-09-03 17:09:07",
+        "error_type": "javascript_error",
+        "error_message": "unexpected token: identifier",
+        "error_source": "test-interface.html",
+        "error_line": 0,
+        "error_column": 0,
+        "stack_trace": "testSyntaxError@http:\/\/localhost:8080\/:419:17nonclick@http:\/\/localhost:8080\/:1:1n",
+        "user_agent": "Mozilla\/5.0 (X11; Linux x86_64; rv:142.0) Gecko\/20100101 Firefox\/142.0",
+        "page_url": "http:\/\/localhost:8080\/",
+        "user_ip": "127.0.0.1",
+        "user_id": 1,
+        "session_id": "cel_1756919338641_y6fba11lz3428",
+        "is_login_page": false,
+        "additional_data": null,
+        "id": 2
+    }
+]
