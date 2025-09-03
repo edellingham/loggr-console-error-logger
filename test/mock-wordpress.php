@@ -14,70 +14,66 @@ define('WP_DEBUG_DISPLAY', true);
 class wpdb {
     public $prefix = 'wp_';
     public $last_error = '';
-    private $pdo;
+    private $errors = [];
     private $queries = [];
     
     public function __construct() {
-        try {
-            // Use SQLite for easy testing
-            $this->pdo = new PDO('sqlite:' . dirname(__DIR__) . '/test/test_database.db');
-            $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-            $this->create_test_table();
-        } catch (PDOException $e) {
-            die("Database connection failed: " . $e->getMessage());
-        }
-    }
-    
-    private function create_test_table() {
-        $sql = "CREATE TABLE IF NOT EXISTS wp_console_errors (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            error_type VARCHAR(50) NOT NULL,
-            error_message TEXT NOT NULL,
-            error_source VARCHAR(255),
-            error_line INTEGER,
-            error_column INTEGER,
-            stack_trace TEXT,
-            user_agent TEXT,
-            page_url VARCHAR(255),
-            user_ip VARCHAR(45),
-            user_id INTEGER DEFAULT NULL,
-            session_id VARCHAR(255),
-            is_login_page INTEGER DEFAULT 0,
-            additional_data TEXT
-        )";
-        
-        $this->pdo->exec($sql);
+        // Use in-memory storage for simplicity
+        $this->errors = [];
     }
     
     public function insert($table, $data, $format = null) {
-        $columns = array_keys($data);
-        $values = array_values($data);
-        $placeholders = array_fill(0, count($columns), '?');
+        // Generate unique ID
+        $data['id'] = count($this->errors) + 1;
+        $data['timestamp'] = date('Y-m-d H:i:s');
         
-        $sql = "INSERT INTO $table (" . implode(', ', $columns) . ") VALUES (" . implode(', ', $placeholders) . ")";
-        
-        try {
-            $stmt = $this->pdo->prepare($sql);
-            $result = $stmt->execute($values);
-            $this->queries[] = $sql;
-            return $result;
-        } catch (PDOException $e) {
-            $this->last_error = $e->getMessage();
-            return false;
-        }
+        // Store in memory
+        $this->errors[] = (object)$data;
+        $this->queries[] = "INSERT INTO $table";
+        return true;
     }
     
     public function get_results($query) {
-        try {
-            $stmt = $this->pdo->prepare($query);
-            $stmt->execute();
-            $this->queries[] = $query;
-            return $stmt->fetchAll(PDO::FETCH_OBJ);
-        } catch (PDOException $e) {
-            $this->last_error = $e->getMessage();
-            return false;
+        $this->queries[] = $query;
+        
+        // Simple query parsing for testing
+        if (strpos($query, 'SELECT * FROM wp_console_errors') !== false) {
+            // Return all errors, apply basic ordering
+            $results = $this->errors;
+            if (strpos($query, 'ORDER BY timestamp DESC') !== false) {
+                usort($results, function($a, $b) {
+                    return strcmp($b->timestamp, $a->timestamp);
+                });
+            }
+            
+            // Apply LIMIT if present
+            if (preg_match('/LIMIT (\d+)/', $query, $matches)) {
+                $limit = (int)$matches[1];
+                $results = array_slice($results, 0, $limit);
+            }
+            
+            return $results;
         }
+        
+        // Handle GROUP BY queries for statistics
+        if (strpos($query, 'GROUP BY error_type') !== false) {
+            $type_counts = [];
+            foreach ($this->errors as $error) {
+                $type = $error->error_type;
+                if (!isset($type_counts[$type])) {
+                    $type_counts[$type] = 0;
+                }
+                $type_counts[$type]++;
+            }
+            
+            $results = [];
+            foreach ($type_counts as $error_type => $count) {
+                $results[] = (object)['error_type' => $error_type, 'count' => $count];
+            }
+            return $results;
+        }
+        
+        return [];
     }
     
     public function prepare($query, ...$args) {
@@ -94,24 +90,31 @@ class wpdb {
     }
     
     public function get_var($query) {
-        try {
-            $stmt = $this->pdo->query($query);
-            $result = $stmt->fetch(PDO::FETCH_NUM);
-            return $result ? $result[0] : null;
-        } catch (PDOException $e) {
-            $this->last_error = $e->getMessage();
-            return null;
+        $this->queries[] = $query;
+        
+        if (strpos($query, 'SELECT COUNT(*) FROM wp_console_errors') !== false) {
+            return count($this->errors);
         }
+        
+        if (strpos($query, 'SELECT COUNT(DISTINCT session_id)') !== false) {
+            $sessions = array_unique(array_map(function($e) {
+                return $e->session_id ?? '';
+            }, $this->errors));
+            return count(array_filter($sessions));
+        }
+        
+        return 0;
     }
     
     public function query($query) {
-        try {
-            $this->queries[] = $query;
-            return $this->pdo->exec($query);
-        } catch (PDOException $e) {
-            $this->last_error = $e->getMessage();
-            return false;
+        $this->queries[] = $query;
+        
+        if (strpos($query, 'DELETE FROM wp_console_errors') !== false) {
+            $this->errors = [];
+            return true;
         }
+        
+        return true;
     }
     
     public function get_queries() {
@@ -151,7 +154,7 @@ function wp_send_json_error($data = null) {
 }
 
 function sanitize_text_field($str) {
-    return filter_var($str, FILTER_SANITIZE_STRING);
+    return htmlspecialchars(strip_tags($str), ENT_QUOTES, 'UTF-8');
 }
 
 function wp_kses_post($content) {

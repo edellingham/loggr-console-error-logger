@@ -75,7 +75,7 @@
         }
         
         // Prevent infinite loops - don't log errors from our own plugin
-        if (errorData.error_message && errorData.error_message.includes('CEL:')) {
+        if (errorData.error_message && typeof errorData.error_message === 'string' && errorData.error_message.includes('CEL:')) {
             console.warn('Console Error Logger: Skipping CEL-related error to prevent infinite loop');
             return;
         }
