@@ -108,6 +108,7 @@ class Console_Error_Logger {
         if (is_admin()) {
             add_action('admin_menu', array($this->admin, 'add_admin_menu'));
             add_action('admin_enqueue_scripts', array($this->admin, 'enqueue_admin_scripts'));
+            add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_error_logger'));
             add_action('wp_ajax_cel_clear_logs', array($this->admin, 'handle_clear_logs'));
         }
     }
@@ -175,9 +176,14 @@ class Console_Error_Logger {
         if (!empty($settings['enable_site_monitoring']) && !is_admin()) {
             $this->enqueue_error_logger_script(false);
         }
-        
-        // Also load on admin pages for diagnostic purposes
-        if (is_admin() && isset($_GET['page']) && $_GET['page'] === 'console-error-logger') {
+    }
+    
+    /**
+     * Enqueue error logger on admin pages
+     */
+    public function enqueue_admin_error_logger($hook) {
+        // Only load on our plugin's admin page
+        if ($hook === 'tools_page_console-error-logger') {
             $this->enqueue_error_logger_script(false);
         }
     }
