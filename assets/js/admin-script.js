@@ -72,6 +72,79 @@
             }
         });
         
+        // Ignore error button
+        $('.cel-ignore-error').on('click', function(e) {
+            e.preventDefault();
+            
+            const $button = $(this);
+            const errorMessage = $button.data('error-message');
+            const errorSource = $button.data('error-source');
+            
+            // Show ignore options modal
+            showIgnoreModal(errorMessage, errorSource, function(patternType, patternValue, notes) {
+                $button.prop('disabled', true).text('Adding...');
+                
+                $.ajax({
+                    url: cel_admin.ajax_url,
+                    type: 'POST',
+                    data: {
+                        action: 'cel_add_ignore_pattern',
+                        nonce: cel_admin.nonce,
+                        pattern_type: patternType,
+                        pattern_value: patternValue,
+                        notes: notes
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            alert('Ignore pattern added successfully!');
+                            window.location.reload();
+                        } else {
+                            alert('Failed to add ignore pattern: ' + (response.data?.message || 'Unknown error'));
+                            $button.prop('disabled', false).text('Ignore');
+                        }
+                    },
+                    error: function(jqXHR, textStatus, errorThrown) {
+                        console.error('Ignore pattern error:', textStatus, errorThrown);
+                        alert('An error occurred while adding ignore pattern.');
+                        $button.prop('disabled', false).text('Ignore');
+                    }
+                });
+            });
+        });
+        
+        // Toggle ignore pattern
+        $('.cel-toggle-pattern').on('click', function(e) {
+            e.preventDefault();
+            
+            const $button = $(this);
+            const patternId = $button.data('pattern-id');
+            
+            $button.prop('disabled', true).text('Processing...');
+            
+            $.ajax({
+                url: cel_admin.ajax_url,
+                type: 'POST',
+                data: {
+                    action: 'cel_toggle_ignore_pattern',
+                    nonce: cel_admin.nonce,
+                    pattern_id: patternId
+                },
+                success: function(response) {
+                    if (response.success) {
+                        window.location.reload();
+                    } else {
+                        alert('Failed to toggle pattern: ' + (response.data?.message || 'Unknown error'));
+                        $button.prop('disabled', false).text('Toggle');
+                    }
+                },
+                error: function(jqXHR, textStatus, errorThrown) {
+                    console.error('Toggle pattern error:', textStatus, errorThrown);
+                    alert('An error occurred while toggling pattern.');
+                    $button.prop('disabled', false).text('Toggle');
+                }
+            });
+        });
+        
         // Auto-refresh toggle for dashboard widget
         if ($('.cel-dashboard-widget').length) {
             let autoRefreshInterval = null;
@@ -372,6 +445,117 @@
         const $header = $('.wrap > h1');
         if ($header.length) {
             $header.after($helpText);
+        }
+        
+        // Show ignore pattern modal
+        function showIgnoreModal(errorMessage, errorSource, callback) {
+            const $modal = $('<div>')
+                .attr('id', 'cel-ignore-modal')
+                .css({
+                    position: 'fixed',
+                    top: '0',
+                    left: '0',
+                    width: '100%',
+                    height: '100%',
+                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                    zIndex: '999999',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                });
+            
+            const modalContent = `
+                <div style="background: white; padding: 30px; border-radius: 8px; max-width: 600px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+                    <h3 style="margin-top: 0;">Create Ignore Pattern</h3>
+                    
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Pattern Type:</label>
+                        <select id="cel-pattern-type" style="width: 100%; padding: 8px;">
+                            <option value="exact_message">Exact message match</option>
+                            <option value="message_contains">Message contains</option>
+                            <option value="exact_source">Exact source match</option>
+                            <option value="source_contains">Source contains</option>
+                        </select>
+                    </div>
+                    
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Pattern Value:</label>
+                        <textarea id="cel-pattern-value" style="width: 100%; height: 80px; padding: 8px;" readonly>${errorMessage}</textarea>
+                        <small style="color: #666;">This will be automatically filled based on the pattern type.</small>
+                    </div>
+                    
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Notes (optional):</label>
+                        <textarea id="cel-pattern-notes" style="width: 100%; height: 60px; padding: 8px;" placeholder="Optional notes about why this error should be ignored"></textarea>
+                    </div>
+                    
+                    <div style="text-align: right;">
+                        <button type="button" id="cel-modal-cancel" class="button" style="margin-right: 10px;">Cancel</button>
+                        <button type="button" id="cel-modal-confirm" class="button button-primary">Add Ignore Pattern</button>
+                    </div>
+                </div>
+            `;
+            
+            $modal.html(modalContent);
+            $('body').append($modal);
+            
+            // Update pattern value based on type selection
+            function updatePatternValue() {
+                const type = $('#cel-pattern-type').val();
+                const $valueField = $('#cel-pattern-value');
+                
+                switch(type) {
+                    case 'exact_message':
+                    case 'message_contains':
+                        $valueField.val(errorMessage);
+                        break;
+                    case 'exact_source':
+                    case 'source_contains':
+                        $valueField.val(errorSource || '');
+                        break;
+                }
+            }
+            
+            // Initial update
+            updatePatternValue();
+            
+            // Update on type change
+            $('#cel-pattern-type').on('change', updatePatternValue);
+            
+            // Handle confirmation
+            $('#cel-modal-confirm').on('click', function() {
+                const patternType = $('#cel-pattern-type').val();
+                const patternValue = $('#cel-pattern-value').val().trim();
+                const notes = $('#cel-pattern-notes').val().trim();
+                
+                if (!patternValue) {
+                    alert('Pattern value cannot be empty.');
+                    return;
+                }
+                
+                $modal.remove();
+                callback(patternType, patternValue, notes);
+            });
+            
+            // Handle cancellation
+            $('#cel-modal-cancel').on('click', function() {
+                $modal.remove();
+            });
+            
+            // Close on escape key
+            $(document).on('keydown.cel-modal', function(e) {
+                if (e.key === 'Escape') {
+                    $modal.remove();
+                    $(document).off('keydown.cel-modal');
+                }
+            });
+            
+            // Close on backdrop click
+            $modal.on('click', function(e) {
+                if (e.target === this) {
+                    $modal.remove();
+                }
+            });
         }
         
     });

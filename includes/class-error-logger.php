@@ -77,6 +77,16 @@ class CEL_Error_Logger {
         // Process and enrich error data
         $processed_data = $this->process_error_data($error_data);
         
+        // Check if error should be ignored
+        if ($this->database->should_ignore_error($processed_data)) {
+            $this->debug_log('Error ignored due to ignore pattern', $processed_data);
+            wp_send_json_success(array(
+                'message' => __('Error ignored due to active ignore pattern', 'console-error-logger'),
+                'ignored' => true
+            ));
+            return;
+        }
+        
         // Try to associate with a user based on IP
         $client_ip = $this->get_client_ip();
         $associated_user_id = $this->database->get_associated_user_by_ip($client_ip);

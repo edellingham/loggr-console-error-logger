@@ -3,7 +3,7 @@
  * Plugin Name: Loggr
  * Plugin URI: https://cloudnineweb.co
  * Description: Captures and logs browser console errors, JavaScript errors, and AJAX failures to help diagnose client-side issues, especially login problems.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Cloud Nine Web
  * Author URI: https://cloudnineweb.co
  * License: GPL v2 or later
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('CEL_VERSION', '1.0.0');
+define('CEL_VERSION', '1.1.0');
 define('CEL_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('CEL_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('CEL_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -103,6 +103,8 @@ class Console_Error_Logger {
         // AJAX handlers
         add_action('wp_ajax_cel_log_error', array($this->error_logger, 'handle_ajax_log_error'));
         add_action('wp_ajax_nopriv_cel_log_error', array($this->error_logger, 'handle_ajax_log_error'));
+        add_action('wp_ajax_cel_add_ignore_pattern', array($this, 'handle_add_ignore_pattern'));
+        add_action('wp_ajax_cel_toggle_ignore_pattern', array($this, 'handle_toggle_ignore_pattern'));
         
         // User tracking hooks
         add_action('wp_login', array($this, 'track_user_login'), 10, 2);
@@ -216,13 +218,16 @@ class Console_Error_Logger {
     }
     
     /**
-     * Track user login for IP association
+     * Track user login for IP association and comprehensive logging
      */
     public function track_user_login($user_login, $user) {
         $user_ip = $this->get_client_ip();
         
         // Track the IP-to-user mapping
         $this->database->track_user_ip($user->ID, $user_ip);
+        
+        // Track comprehensive login details
+        $this->database->track_login($user);
         
         // Update any recent errors from this IP to associate with this user
         $this->associate_recent_errors_with_user($user->ID, $user_ip);
@@ -278,6 +283,62 @@ class Console_Error_Logger {
         
         // Return localhost if no valid IP found
         return '127.0.0.1';
+    }
+    
+    /**
+     * Handle AJAX request to add ignore pattern
+     */
+    public function handle_add_ignore_pattern() {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'cel_admin_nonce')) {
+            wp_send_json_error(array('message' => 'Invalid security token'));
+            return;
+        }
+        
+        // Check permissions
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
+            return;
+        }
+        
+        $pattern_type = sanitize_text_field($_POST['pattern_type']);
+        $pattern_value = sanitize_textarea_field($_POST['pattern_value']);
+        $notes = sanitize_textarea_field($_POST['notes'] ?? '');
+        
+        $result = $this->database->add_ignore_pattern($pattern_type, $pattern_value, $notes);
+        
+        if ($result !== false) {
+            wp_send_json_success(array('message' => 'Ignore pattern added successfully'));
+        } else {
+            wp_send_json_error(array('message' => 'Failed to add ignore pattern'));
+        }
+    }
+    
+    /**
+     * Handle AJAX request to toggle ignore pattern
+     */
+    public function handle_toggle_ignore_pattern() {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'cel_admin_nonce')) {
+            wp_send_json_error(array('message' => 'Invalid security token'));
+            return;
+        }
+        
+        // Check permissions
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
+            return;
+        }
+        
+        $pattern_id = absint($_POST['pattern_id']);
+        
+        $result = $this->database->toggle_ignore_pattern($pattern_id);
+        
+        if ($result !== false) {
+            wp_send_json_success(array('message' => 'Ignore pattern toggled successfully'));
+        } else {
+            wp_send_json_error(array('message' => 'Failed to toggle ignore pattern'));
+        }
     }
 }
 

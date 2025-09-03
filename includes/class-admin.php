@@ -118,6 +118,14 @@ class CEL_Admin {
                    class="nav-tab <?php echo $current_tab === 'stats' ? 'nav-tab-active' : ''; ?>">
                     <?php _e('Statistics', 'console-error-logger'); ?>
                 </a>
+                <a href="?page=console-error-logger&tab=ignore" 
+                   class="nav-tab <?php echo $current_tab === 'ignore' ? 'nav-tab-active' : ''; ?>">
+                    <?php _e('Ignore Patterns', 'console-error-logger'); ?>
+                </a>
+                <a href="?page=console-error-logger&tab=logins" 
+                   class="nav-tab <?php echo $current_tab === 'logins' ? 'nav-tab-active' : ''; ?>">
+                    <?php _e('Login Analytics', 'console-error-logger'); ?>
+                </a>
                 <a href="?page=console-error-logger&tab=settings" 
                    class="nav-tab <?php echo $current_tab === 'settings' ? 'nav-tab-active' : ''; ?>">
                     <?php _e('Settings', 'console-error-logger'); ?>
@@ -133,6 +141,12 @@ class CEL_Admin {
                 switch ($current_tab) {
                     case 'stats':
                         $this->render_stats_tab();
+                        break;
+                    case 'ignore':
+                        $this->render_ignore_tab();
+                        break;
+                    case 'logins':
+                        $this->render_logins_tab();
                         break;
                     case 'settings':
                         $this->render_settings_tab();
@@ -347,6 +361,13 @@ class CEL_Admin {
                                             data-error-id="<?php echo esc_attr($error->id); ?>">
                                         <?php _e('Details', 'console-error-logger'); ?>
                                     </button>
+                                    <button type="button" 
+                                            class="button button-small cel-ignore-error" 
+                                            data-error-id="<?php echo esc_attr($error->id); ?>"
+                                            data-error-message="<?php echo esc_attr($error->error_message); ?>"
+                                            data-error-source="<?php echo esc_attr($error->error_source); ?>">
+                                        <?php _e('Ignore', 'console-error-logger'); ?>
+                                    </button>
                                 </td>
                             </tr>
                             
@@ -461,6 +482,228 @@ class CEL_Admin {
                     <p><?php _e('No error statistics available yet.', 'console-error-logger'); ?></p>
                 <?php endif; ?>
             </div>
+        </div>
+        <?php
+    }
+    
+    /**
+     * Render ignore patterns tab
+     */
+    private function render_ignore_tab() {
+        $patterns = $this->database->get_ignore_patterns();
+        
+        ?>
+        <div class="cel-ignore-wrapper">
+            <h2><?php _e('Ignore Patterns', 'console-error-logger'); ?></h2>
+            <p><?php _e('Manage patterns to ignore specific errors automatically.', 'console-error-logger'); ?></p>
+            
+            <?php if (!empty($patterns)): ?>
+                <table class="wp-list-table widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th><?php _e('Type', 'console-error-logger'); ?></th>
+                            <th><?php _e('Pattern', 'console-error-logger'); ?></th>
+                            <th><?php _e('Created', 'console-error-logger'); ?></th>
+                            <th><?php _e('Ignored Count', 'console-error-logger'); ?></th>
+                            <th><?php _e('Status', 'console-error-logger'); ?></th>
+                            <th><?php _e('Actions', 'console-error-logger'); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($patterns as $pattern): ?>
+                            <tr>
+                                <td><?php echo esc_html($pattern->pattern_type); ?></td>
+                                <td>
+                                    <code style="font-size: 12px; word-break: break-all;">
+                                        <?php 
+                                        $value = $pattern->pattern_value;
+                                        echo esc_html(strlen($value) > 100 ? substr($value, 0, 100) . '...' : $value);
+                                        ?>
+                                    </code>
+                                    <?php if ($pattern->notes): ?>
+                                        <div style="font-size: 11px; color: #666; margin-top: 5px;">
+                                            <?php echo esc_html($pattern->notes); ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php echo esc_html(human_time_diff(strtotime($pattern->created_at))); ?> ago
+                                    <br><small>by <?php echo esc_html($pattern->created_by_name ?: 'Unknown'); ?></small>
+                                </td>
+                                <td>
+                                    <strong><?php echo number_format_i18n($pattern->ignore_count); ?></strong>
+                                    <?php if ($pattern->last_ignored): ?>
+                                        <br><small>Last: <?php echo esc_html(human_time_diff(strtotime($pattern->last_ignored))); ?> ago</small>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <span class="cel-status <?php echo $pattern->is_active ? 'active' : 'inactive'; ?>">
+                                        <?php echo $pattern->is_active ? __('Active', 'console-error-logger') : __('Inactive', 'console-error-logger'); ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <button type="button" 
+                                            class="button button-small cel-toggle-pattern" 
+                                            data-pattern-id="<?php echo esc_attr($pattern->id); ?>">
+                                        <?php echo $pattern->is_active ? __('Disable', 'console-error-logger') : __('Enable', 'console-error-logger'); ?>
+                                    </button>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php else: ?>
+                <div class="notice notice-info">
+                    <p><?php _e('No ignore patterns configured yet. Use the "Ignore" button on error logs to create patterns.', 'console-error-logger'); ?></p>
+                </div>
+            <?php endif; ?>
+        </div>
+        
+        <style>
+            .cel-status.active {
+                color: #10b981;
+                font-weight: bold;
+            }
+            .cel-status.inactive {
+                color: #ef4444;
+                font-weight: bold;
+            }
+        </style>
+        <?php
+    }
+    
+    /**
+     * Render login analytics tab
+     */
+    private function render_logins_tab() {
+        // Get pagination parameters
+        $per_page = 50;
+        $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
+        $offset = ($current_page - 1) * $per_page;
+        
+        // Get filter parameters
+        $filter_user = isset($_GET['user_id']) ? absint($_GET['user_id']) : 0;
+        $filter_ip = isset($_GET['ip_address']) ? sanitize_text_field(wp_unslash($_GET['ip_address'])) : '';
+        
+        // Build query args
+        $args = array(
+            'limit' => $per_page,
+            'offset' => $offset
+        );
+        
+        if ($filter_user) {
+            $args['user_id'] = $filter_user;
+        }
+        
+        if ($filter_ip) {
+            $args['ip_address'] = $filter_ip;
+        }
+        
+        // Get login data
+        $logins = $this->database->get_login_history($args);
+        
+        ?>
+        <div class="cel-logins-wrapper">
+            <h2><?php _e('Login Analytics', 'console-error-logger'); ?></h2>
+            <p><?php _e('Track all user logins and associated error patterns.', 'console-error-logger'); ?></p>
+            
+            <div class="tablenav top">
+                <div class="alignleft actions">
+                    <form method="get" action="">
+                        <input type="hidden" name="page" value="console-error-logger">
+                        <input type="hidden" name="tab" value="logins">
+                        
+                        <input type="number" name="user_id" 
+                               value="<?php echo esc_attr($filter_user); ?>" 
+                               placeholder="User ID"
+                               min="1">
+                        
+                        <input type="text" name="ip_address" 
+                               value="<?php echo esc_attr($filter_ip); ?>" 
+                               placeholder="IP Address">
+                        
+                        <input type="submit" class="button" 
+                               value="<?php esc_attr_e('Filter', 'console-error-logger'); ?>">
+                    </form>
+                </div>
+            </div>
+            
+            <?php if (empty($logins)): ?>
+                <div class="notice notice-info">
+                    <p><?php _e('No login records yet.', 'console-error-logger'); ?></p>
+                </div>
+            <?php else: ?>
+                <table class="wp-list-table widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th><?php _e('Login Time', 'console-error-logger'); ?></th>
+                            <th><?php _e('User', 'console-error-logger'); ?></th>
+                            <th><?php _e('IP Address', 'console-error-logger'); ?></th>
+                            <th><?php _e('Errors Before', 'console-error-logger'); ?></th>
+                            <th><?php _e('Page URL', 'console-error-logger'); ?></th>
+                            <th><?php _e('User Agent', 'console-error-logger'); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($logins as $login): ?>
+                            <tr>
+                                <td>
+                                    <?php echo esc_html(
+                                        wp_date(
+                                            get_option('date_format') . ' ' . get_option('time_format'),
+                                            strtotime($login->login_time)
+                                        )
+                                    ); ?>
+                                </td>
+                                <td>
+                                    <strong><?php echo esc_html($login->user_login); ?></strong>
+                                    <br><small><?php echo esc_html($login->user_email); ?></small>
+                                    <?php if ($login->user_roles): ?>
+                                        <br><em style="font-size: 11px; color: #666;">
+                                            <?php 
+                                            $roles = json_decode($login->user_roles, true);
+                                            echo esc_html(implode(', ', $roles ?: array()));
+                                            ?>
+                                        </em>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <code><?php echo esc_html($login->ip_address); ?></code>
+                                </td>
+                                <td>
+                                    <?php if ($login->login_errors_before > 0): ?>
+                                        <span style="color: #ef4444; font-weight: bold;">
+                                            <?php echo esc_html($login->login_errors_before); ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <span style="color: #10b981;">0</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if ($login->page_url): ?>
+                                        <a href="<?php echo esc_url($login->page_url); ?>" target="_blank" rel="noopener">
+                                            <?php 
+                                            $path = parse_url($login->page_url, PHP_URL_PATH);
+                                            echo esc_html($path ?: '/');
+                                            ?>
+                                        </a>
+                                    <?php else: ?>
+                                        <em><?php _e('Unknown', 'console-error-logger'); ?></em>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <code style="font-size: 11px; word-break: break-all;">
+                                        <?php 
+                                        $ua = $login->user_agent;
+                                        echo esc_html(strlen($ua) > 60 ? substr($ua, 0, 60) . '...' : $ua);
+                                        ?>
+                                    </code>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
         </div>
         <?php
     }
