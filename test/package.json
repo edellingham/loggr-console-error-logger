@@ -1,0 +1,13 @@
+{
+  "name": "console-error-logger-tests",
+  "version": "1.0.0",
+  "description": "Test suite for Console Error Logger WordPress plugin",
+  "scripts": {
+    "test": "node automated-tests.js",
+    "serve": "php -S localhost:8080 test-server.php",
+    "test-full": "npm run serve & sleep 2 && npm test"
+  },
+  "keywords": ["wordpress", "plugin", "testing", "error-logging"],
+  "author": "Console Error Logger",
+  "license": "GPL-2.0+"
+}

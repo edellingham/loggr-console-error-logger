@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Console Error Logger - Test Interface</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        header {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        
+        .status.connected {
+            background: #10b981;
+            color: white;
+        }
+        
+        .status.disconnected {
+            background: #ef4444;
+            color: white;
+        }
+        
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+        
+        .panel {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        .panel h2 {
+            color: #4a5568;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        .test-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            width: 100%;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button.danger {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+        
+        button.success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+        
+        button.warning {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        }
+        
+        .error-log {
+            background: #1a202c;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 8px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+        }
+        
+        .error-entry {
+            margin-bottom: 15px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 5px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .error-entry.error {
+            border-left-color: #ef4444;
+        }
+        
+        .error-entry.warning {
+            border-left-color: #f59e0b;
+        }
+        
+        .error-entry.info {
+            border-left-color: #3b82f6;
+        }
+        
+        .error-time {
+            color: #9ca3af;
+            font-size: 11px;
+        }
+        
+        .error-type {
+            color: #667eea;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .error-message {
+            color: #f3f4f6;
+            margin: 10px 0;
+        }
+        
+        .error-source {
+            color: #9ca3af;
+            font-size: 12px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 28px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .custom-test {
+            margin-top: 20px;
+        }
+        
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+            resize: vertical;
+            min-height: 100px;
+            margin-bottom: 10px;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+        }
+        
+        .spinner {
+            border: 3px solid #e2e8f0;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @media (max-width: 768px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 Console Error Logger Test Interface</h1>
+            <p>Comprehensive testing environment for error capture and logging</p>
+            <div style="margin-top: 15px;">
+                <span id="status" class="status disconnected">Initializing...</span>
+                <span style="margin-left: 20px; color: #6b7280;">Server: <span id="server-url">http://localhost:8080</span></span>
+            </div>
+        </header>
+        
+        <div class="main-grid">
+            <!-- Test Controls Panel -->
+            <div class="panel">
+                <h2>🧪 Error Test Suite</h2>
+                
+                <h3 style="margin-bottom: 15px; color: #6b7280;">JavaScript Errors</h3>
+                <div class="test-grid">
+                    <button onclick="testJavaScriptError()">Throw Error</button>
+                    <button onclick="testSyntaxError()">Syntax Error</button>
+                    <button onclick="testTypeError()">Type Error</button>
+                    <button onclick="testReferenceError()">Reference Error</button>
+                </div>
+                
+                <h3 style="margin: 20px 0 15px; color: #6b7280;">Console Methods</h3>
+                <div class="test-grid">
+                    <button onclick="testConsoleError()" class="danger">Console Error</button>
+                    <button onclick="testConsoleWarn()" class="warning">Console Warn</button>
+                    <button onclick="testConsoleLog()">Console Log</button>
+                    <button onclick="testConsoleInfo()">Console Info</button>
+                </div>
+                
+                <h3 style="margin: 20px 0 15px; color: #6b7280;">Network Errors</h3>
+                <div class="test-grid">
+                    <button onclick="testAjaxError()">AJAX Error</button>
+                    <button onclick="testFetchError()">Fetch Error</button>
+                    <button onclick="testResourceError()">Resource Error</button>
+                    <button onclick="test404Error()">404 Error</button>
+                </div>
+                
+                <h3 style="margin: 20px 0 15px; color: #6b7280;">Async Errors</h3>
+                <div class="test-grid">
+                    <button onclick="testPromiseRejection()">Promise Rejection</button>
+                    <button onclick="testAsyncError()">Async Function</button>
+                    <button onclick="testTimeoutError()">Timeout Error</button>
+                    <button onclick="testLoginTimeout()">Login Timeout</button>
+                </div>
+                
+                <div class="custom-test">
+                    <h3 style="margin-bottom: 15px; color: #6b7280;">Custom Code Execution</h3>
+                    <textarea id="custom-code" placeholder="// Enter JavaScript code to execute&#10;// Example: throw new Error('Custom error');"></textarea>
+                    <button onclick="executeCustomCode()" class="success">Execute Custom Code</button>
+                </div>
+            </div>
+            
+            <!-- Statistics Panel -->
+            <div class="panel">
+                <h2>📊 Error Statistics</h2>
+                
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="total-errors">0</div>
+                        <div class="stat-label">Total Errors</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="error-types">0</div>
+                        <div class="stat-label">Error Types</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="recent-errors">0</div>
+                        <div class="stat-label">Last Hour</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="unique-sessions">0</div>
+                        <div class="stat-label">Sessions</div>
+                    </div>
+                </div>
+                
+                <h3 style="margin: 20px 0 15px; color: #6b7280;">Error Breakdown</h3>
+                <div id="error-breakdown" style="margin-bottom: 20px;">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+                
+                <div class="controls">
+                    <button onclick="refreshStats()" class="success">Refresh Stats</button>
+                    <button onclick="clearAllErrors()" class="danger">Clear All Errors</button>
+                    <button onclick="exportErrors()">Export to JSON</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Error Log Panel -->
+        <div class="panel">
+            <h2>📜 Live Error Log</h2>
+            <div class="controls" style="margin-bottom: 20px;">
+                <button onclick="refreshLog()">Refresh Log</button>
+                <button onclick="clearLog()">Clear Display</button>
+                <label style="margin-left: auto;">
+                    <input type="checkbox" id="auto-refresh" checked> Auto-refresh
+                </label>
+            </div>
+            <div id="error-log" class="error-log">
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <p style="margin-top: 10px;">Loading errors...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Include jQuery -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    
+    <!-- Mock cel_ajax object -->
+    <script>
+        window.cel_ajax = {
+            ajax_url: '/ajax',
+            nonce: 'test_nonce',
+            is_login_page: false
+        };
+    </script>
+    
+    <!-- Include the plugin's error logger script -->
+    <script src="/assets/js/console-error-logger.js"></script>
+    
+    <!-- Test Interface Script -->
+    <script>
+        let autoRefreshInterval = null;
+        
+        // Initialize
+        $(document).ready(function() {
+            checkConnection();
+            refreshStats();
+            refreshLog();
+            
+            // Auto-refresh setup
+            $('#auto-refresh').change(function() {
+                if ($(this).is(':checked')) {
+                    autoRefreshInterval = setInterval(function() {
+                        refreshLog();
+                        refreshStats();
+                    }, 2000);
+                } else {
+                    clearInterval(autoRefreshInterval);
+                }
+            }).trigger('change');
+        });
+        
+        // Check server connection
+        function checkConnection() {
+            $.ajax({
+                url: '/api/stats',
+                success: function() {
+                    $('#status').removeClass('disconnected').addClass('connected').text('Connected');
+                },
+                error: function() {
+                    $('#status').removeClass('connected').addClass('disconnected').text('Disconnected');
+                }
+            });
+        }
+        
+        // Test Functions
+        function testJavaScriptError() {
+            throw new Error('Test JavaScript Error: This is a deliberate error for testing');
+        }
+        
+        function testSyntaxError() {
+            try {
+                eval('This is not valid JavaScript {{{');
+            } catch (e) {
+                window.dispatchEvent(new ErrorEvent('error', {
+                    message: e.message,
+                    filename: 'test-interface.html',
+                    lineno: 0,
+                    colno: 0,
+                    error: e
+                }));
+            }
+        }
+        
+        function testTypeError() {
+            try {
+                null.undefinedMethod();
+            } catch (e) {
+                window.dispatchEvent(new ErrorEvent('error', {
+                    message: e.message,
+                    filename: 'test-interface.html',
+                    lineno: 0,
+                    colno: 0,
+                    error: e
+                }));
+            }
+        }
+        
+        function testReferenceError() {
+            try {
+                console.log(undefinedVariable);
+            } catch (e) {
+                window.dispatchEvent(new ErrorEvent('error', {
+                    message: e.message,
+                    filename: 'test-interface.html',
+                    lineno: 0,
+                    colno: 0,
+                    error: e
+                }));
+            }
+        }
+        
+        function testConsoleError() {
+            console.error('Test Console Error: This is a deliberate console error');
+        }
+        
+        function testConsoleWarn() {
+            console.warn('Test Console Warning: This is a deliberate warning');
+        }
+        
+        function testConsoleLog() {
+            console.log('Test Console Log: This should not be logged (info level)');
+        }
+        
+        function testConsoleInfo() {
+            console.info('Test Console Info: This is an informational message');
+        }
+        
+        function testAjaxError() {
+            $.ajax({
+                url: '/nonexistent-endpoint',
+                error: function(xhr, status, error) {
+                    console.log('AJAX error triggered:', error);
+                }
+            });
+        }
+        
+        function testFetchError() {
+            fetch('/api/nonexistent')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Fetch failed with status: ' + response.status);
+                    }
+                })
+                .catch(error => console.error('Fetch error:', error));
+        }
+        
+        function testResourceError() {
+            const img = new Image();
+            img.src = '/nonexistent-image.jpg';
+            document.body.appendChild(img);
+            setTimeout(() => document.body.removeChild(img), 100);
+        }
+        
+        function test404Error() {
+            const script = document.createElement('script');
+            script.src = '/nonexistent-script.js';
+            document.head.appendChild(script);
+            setTimeout(() => document.head.removeChild(script), 100);
+        }
+        
+        function testPromiseRejection() {
+            Promise.reject(new Error('Test Promise Rejection: Unhandled promise rejection'));
+        }
+        
+        function testAsyncError() {
+            (async function() {
+                throw new Error('Test Async Error: Error in async function');
+            })();
+        }
+        
+        function testTimeoutError() {
+            setTimeout(function() {
+                throw new Error('Test Timeout Error: Error in setTimeout callback');
+            }, 100);
+        }
+        
+        function testLoginTimeout() {
+            // Simulate login timeout
+            window.cel_ajax.is_login_page = true;
+            const event = new CustomEvent('loginTimeout', {
+                detail: { message: 'Login form submission timeout' }
+            });
+            window.dispatchEvent(event);
+            setTimeout(() => {
+                window.cel_ajax.is_login_page = false;
+            }, 100);
+        }
+        
+        function executeCustomCode() {
+            const code = $('#custom-code').val();
+            if (!code) {
+                alert('Please enter some JavaScript code to execute');
+                return;
+            }
+            
+            try {
+                eval(code);
+            } catch (e) {
+                window.dispatchEvent(new ErrorEvent('error', {
+                    message: e.message,
+                    filename: 'custom-code',
+                    lineno: 0,
+                    colno: 0,
+                    error: e
+                }));
+            }
+        }
+        
+        // Statistics Functions
+        function refreshStats() {
+            $.get('/api/stats', function(stats) {
+                $('#total-errors').text(stats.total || 0);
+                $('#error-types').text(stats.by_type ? stats.by_type.length : 0);
+                $('#recent-errors').text(stats.recent || 0);
+                $('#unique-sessions').text(stats.unique_sessions || 0);
+                
+                // Update breakdown
+                if (stats.by_type && stats.by_type.length > 0) {
+                    let breakdownHtml = '<div style="display: grid; gap: 10px;">';
+                    stats.by_type.forEach(function(type) {
+                        const percentage = stats.total > 0 ? ((type.count / stats.total) * 100).toFixed(1) : 0;
+                        breakdownHtml += `
+                            <div style="display: flex; align-items: center;">
+                                <span style="flex: 1; color: #4b5563;">${type.error_type}:</span>
+                                <span style="font-weight: bold; color: #667eea; margin-right: 10px;">${type.count}</span>
+                                <div style="width: 100px; height: 20px; background: #e5e7eb; border-radius: 10px; overflow: hidden;">
+                                    <div style="width: ${percentage}%; height: 100%; background: linear-gradient(90deg, #667eea, #764ba2);"></div>
+                                </div>
+                                <span style="margin-left: 10px; color: #6b7280; font-size: 12px;">${percentage}%</span>
+                            </div>
+                        `;
+                    });
+                    breakdownHtml += '</div>';
+                    $('#error-breakdown').html(breakdownHtml);
+                } else {
+                    $('#error-breakdown').html('<p style="color: #9ca3af;">No errors logged yet</p>');
+                }
+            });
+        }
+        
+        function refreshLog() {
+            $('#loading').show();
+            $.get('/api/errors', function(errors) {
+                $('#loading').hide();
+                if (errors && errors.length > 0) {
+                    let logHtml = '';
+                    errors.forEach(function(error) {
+                        const errorClass = error.error_type.includes('error') ? 'error' : 
+                                          error.error_type.includes('warn') ? 'warning' : 'info';
+                        
+                        logHtml += `
+                            <div class="error-entry ${errorClass}">
+                                <div class="error-time">${error.timestamp}</div>
+                                <div class="error-type">[${error.error_type}]</div>
+                                <div class="error-message">${escapeHtml(error.error_message)}</div>
+                                ${error.error_source ? `<div class="error-source">${error.error_source}:${error.error_line}:${error.error_column}</div>` : ''}
+                                ${error.stack_trace ? `<div style="margin-top: 10px; color: #6b7280; font-size: 11px;"><pre>${escapeHtml(error.stack_trace)}</pre></div>` : ''}
+                            </div>
+                        `;
+                    });
+                    $('#error-log').html(logHtml);
+                } else {
+                    $('#error-log').html('<div style="text-align: center; color: #6b7280; padding: 40px;">No errors logged yet. Try triggering some test errors!</div>');
+                }
+            });
+        }
+        
+        function clearLog() {
+            $('#error-log').html('<div style="text-align: center; color: #6b7280; padding: 40px;">Log cleared. Trigger some errors to see them here.</div>');
+        }
+        
+        function clearAllErrors() {
+            if (confirm('Are you sure you want to clear all logged errors from the database?')) {
+                $.post('/api/clear', function(response) {
+                    if (response.success) {
+                        alert('All errors cleared successfully');
+                        refreshStats();
+                        refreshLog();
+                    }
+                });
+            }
+        }
+        
+        function exportErrors() {
+            $.get('/api/errors', function(errors) {
+                const dataStr = JSON.stringify(errors, null, 2);
+                const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
+                
+                const exportLink = document.createElement('a');
+                exportLink.setAttribute('href', dataUri);
+                exportLink.setAttribute('download', 'error_log_' + new Date().toISOString() + '.json');
+                document.body.appendChild(exportLink);
+                exportLink.click();
+                document.body.removeChild(exportLink);
+            });
+        }
+        
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+    </script>
+</body>
+</html>
