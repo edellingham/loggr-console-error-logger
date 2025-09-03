@@ -48,6 +48,7 @@ class CEL_Database {
             page_url VARCHAR(255),
             user_ip VARCHAR(45),
             user_id BIGINT(20) UNSIGNED DEFAULT NULL,
+            associated_user_id BIGINT(20) UNSIGNED DEFAULT NULL,
             session_id VARCHAR(255),
             is_login_page TINYINT(1) DEFAULT 0,
             additional_data TEXT,
@@ -55,14 +56,33 @@ class CEL_Database {
             KEY timestamp (timestamp),
             KEY error_type (error_type),
             KEY user_ip (user_ip),
+            KEY user_id (user_id),
+            KEY associated_user_id (associated_user_id),
             KEY is_login_page (is_login_page)
+        ) $charset_collate;";
+        
+        // Create IP-to-user mapping table
+        $mapping_table = $this->wpdb->prefix . 'console_errors_ip_mapping';
+        $mapping_sql = "CREATE TABLE {$mapping_table} (
+            id MEDIUMINT(9) NOT NULL AUTO_INCREMENT,
+            ip_address VARCHAR(45) NOT NULL,
+            user_id BIGINT(20) UNSIGNED NOT NULL,
+            first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_seen DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            login_count INT DEFAULT 1,
+            PRIMARY KEY (id),
+            UNIQUE KEY ip_user (ip_address, user_id),
+            KEY ip_address (ip_address),
+            KEY user_id (user_id),
+            KEY last_seen (last_seen)
         ) $charset_collate;";
         
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($sql);
+        dbDelta($mapping_sql);
         
         // Update database version
-        update_option('cel_db_version', '1.0.0');
+        update_option('cel_db_version', '1.1.0');
     }
     
     /**
@@ -277,6 +297,214 @@ class CEL_Database {
      */
     public function get_table_name() {
         return $this->table_name;
+    }
+    
+    /**
+     * Track user-IP association
+     */
+    public function track_user_ip($user_id, $ip_address) {
+        if (empty($user_id) || empty($ip_address)) {
+            return false;
+        }
+        
+        $mapping_table = $this->wpdb->prefix . 'console_errors_ip_mapping';
+        
+        // Check if mapping already exists
+        $existing = $this->wpdb->get_row($this->wpdb->prepare(
+            "SELECT id, login_count FROM {$mapping_table} WHERE ip_address = %s AND user_id = %d",
+            $ip_address, $user_id
+        ));
+        
+        if ($existing) {
+            // Update existing mapping
+            return $this->wpdb->update(
+                $mapping_table,
+                array(
+                    'last_seen' => current_time('mysql'),
+                    'login_count' => $existing->login_count + 1
+                ),
+                array('id' => $existing->id),
+                array('%s', '%d'),
+                array('%d')
+            );
+        } else {
+            // Insert new mapping
+            return $this->wpdb->insert(
+                $mapping_table,
+                array(
+                    'ip_address' => $ip_address,
+                    'user_id' => $user_id,
+                    'first_seen' => current_time('mysql'),
+                    'last_seen' => current_time('mysql')
+                ),
+                array('%s', '%d', '%s', '%s')
+            );
+        }
+    }
+    
+    /**
+     * Get associated user ID for an IP address
+     */
+    public function get_associated_user_by_ip($ip_address) {
+        if (empty($ip_address)) {
+            return null;
+        }
+        
+        $mapping_table = $this->wpdb->prefix . 'console_errors_ip_mapping';
+        
+        // Get most recent user for this IP
+        return $this->wpdb->get_var($this->wpdb->prepare(
+            "SELECT user_id FROM {$mapping_table} 
+             WHERE ip_address = %s 
+             ORDER BY last_seen DESC 
+             LIMIT 1",
+            $ip_address
+        ));
+    }
+    
+    /**
+     * Get all users associated with an IP
+     */
+    public function get_users_by_ip($ip_address) {
+        if (empty($ip_address)) {
+            return array();
+        }
+        
+        $mapping_table = $this->wpdb->prefix . 'console_errors_ip_mapping';
+        
+        return $this->wpdb->get_results($this->wpdb->prepare(
+            "SELECT m.*, u.display_name, u.user_email, u.user_login
+             FROM {$mapping_table} m
+             LEFT JOIN {$this->wpdb->users} u ON m.user_id = u.ID
+             WHERE m.ip_address = %s 
+             ORDER BY m.last_seen DESC",
+            $ip_address
+        ));
+    }
+    
+    /**
+     * Get IP addresses for a user
+     */
+    public function get_ips_by_user($user_id) {
+        if (empty($user_id)) {
+            return array();
+        }
+        
+        $mapping_table = $this->wpdb->prefix . 'console_errors_ip_mapping';
+        
+        return $this->wpdb->get_results($this->wpdb->prepare(
+            "SELECT * FROM {$mapping_table} 
+             WHERE user_id = %d 
+             ORDER BY last_seen DESC",
+            $user_id
+        ));
+    }
+    
+    /**
+     * Update error with associated user
+     */
+    public function update_error_associated_user($error_id, $user_id) {
+        return $this->wpdb->update(
+            $this->table_name,
+            array('associated_user_id' => $user_id),
+            array('id' => $error_id),
+            array('%d'),
+            array('%d')
+        );
+    }
+    
+    /**
+     * Get errors with user information
+     */
+    public function get_errors_with_users($args = array()) {
+        $defaults = array(
+            'limit' => 50,
+            'offset' => 0,
+            'orderby' => 'timestamp',
+            'order' => 'DESC',
+            'error_type' => '',
+            'date_from' => '',
+            'date_to' => '',
+            'search' => '',
+            'is_login_page' => null,
+            'user_id' => null,
+            'associated_user_id' => null
+        );
+        
+        $args = wp_parse_args($args, $defaults);
+        
+        // Build WHERE clause
+        $where = array('1=1');
+        $prepare_values = array();
+        
+        if (!empty($args['error_type'])) {
+            $where[] = 'e.error_type = %s';
+            $prepare_values[] = $args['error_type'];
+        }
+        
+        if (!empty($args['date_from'])) {
+            $where[] = 'e.timestamp >= %s';
+            $prepare_values[] = $args['date_from'];
+        }
+        
+        if (!empty($args['date_to'])) {
+            $where[] = 'e.timestamp <= %s';
+            $prepare_values[] = $args['date_to'];
+        }
+        
+        if (!empty($args['search'])) {
+            $where[] = '(e.error_message LIKE %s OR e.error_source LIKE %s)';
+            $search_term = '%' . $this->wpdb->esc_like($args['search']) . '%';
+            $prepare_values[] = $search_term;
+            $prepare_values[] = $search_term;
+        }
+        
+        if ($args['is_login_page'] !== null) {
+            $where[] = 'e.is_login_page = %d';
+            $prepare_values[] = (int)$args['is_login_page'];
+        }
+        
+        if (!empty($args['user_id'])) {
+            $where[] = 'e.user_id = %d';
+            $prepare_values[] = $args['user_id'];
+        }
+        
+        if (!empty($args['associated_user_id'])) {
+            $where[] = 'e.associated_user_id = %d';
+            $prepare_values[] = $args['associated_user_id'];
+        }
+        
+        $where_clause = implode(' AND ', $where);
+        
+        // Validate orderby column
+        $allowed_orderby = array('id', 'timestamp', 'error_type', 'error_source', 'user_ip');
+        $orderby = in_array($args['orderby'], $allowed_orderby) ? $args['orderby'] : 'timestamp';
+        
+        // Validate order direction
+        $order = strtoupper($args['order']) === 'ASC' ? 'ASC' : 'DESC';
+        
+        // Build query with user joins
+        $query = "SELECT e.*, 
+                         u1.display_name as logged_user_name, u1.user_login as logged_user_login,
+                         u2.display_name as associated_user_name, u2.user_login as associated_user_login
+                  FROM {$this->table_name} e
+                  LEFT JOIN {$this->wpdb->users} u1 ON e.user_id = u1.ID
+                  LEFT JOIN {$this->wpdb->users} u2 ON e.associated_user_id = u2.ID
+                  WHERE {$where_clause} 
+                  ORDER BY e.{$orderby} {$order} 
+                  LIMIT %d OFFSET %d";
+        
+        $prepare_values[] = $args['limit'];
+        $prepare_values[] = $args['offset'];
+        
+        // Execute query
+        if (!empty($prepare_values)) {
+            return $this->wpdb->get_results(
+                $this->wpdb->prepare($query, $prepare_values)
+            );
+        } else {
+            return $this->wpdb->get_results($query);
+        }
     }
     
     /**

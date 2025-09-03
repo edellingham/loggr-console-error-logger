@@ -77,6 +77,13 @@ class CEL_Error_Logger {
         // Process and enrich error data
         $processed_data = $this->process_error_data($error_data);
         
+        // Try to associate with a user based on IP
+        $client_ip = $this->get_client_ip();
+        $associated_user_id = $this->database->get_associated_user_by_ip($client_ip);
+        if ($associated_user_id) {
+            $processed_data['associated_user_id'] = $associated_user_id;
+        }
+        
         // Log the error to database
         $result = $this->database->insert_error($processed_data);
         
@@ -353,5 +360,37 @@ class CEL_Error_Logger {
             'orderby' => 'timestamp',
             'order' => 'DESC'
         ));
+    }
+    
+    /**
+     * Get client IP address
+     */
+    private function get_client_ip() {
+        // Check for various IP address headers
+        $ip_headers = array(
+            'HTTP_CF_CONNECTING_IP',     // Cloudflare
+            'HTTP_X_FORWARDED_FOR',      // Load balancers/proxies
+            'HTTP_X_FORWARDED',          // Proxies
+            'HTTP_X_CLUSTER_CLIENT_IP',  // Cluster
+            'HTTP_CLIENT_IP',            // Proxy
+            'HTTP_FORWARDED_FOR',        // Proxies
+            'HTTP_FORWARDED',            // Proxies
+            'REMOTE_ADDR'                // Standard
+        );
+
+        foreach ($ip_headers as $header) {
+            if (!empty($_SERVER[$header])) {
+                $ips = explode(',', $_SERVER[$header]);
+                $ip = trim($ips[0]);
+                
+                // Validate IP address
+                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                    return $ip;
+                }
+            }
+        }
+        
+        // Return localhost if no valid IP found
+        return '127.0.0.1';
     }
 }

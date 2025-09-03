@@ -104,6 +104,9 @@ class Console_Error_Logger {
         add_action('wp_ajax_cel_log_error', array($this->error_logger, 'handle_ajax_log_error'));
         add_action('wp_ajax_nopriv_cel_log_error', array($this->error_logger, 'handle_ajax_log_error'));
         
+        // User tracking hooks
+        add_action('wp_login', array($this, 'track_user_login'), 10, 2);
+        
         // Admin hooks
         if (is_admin()) {
             add_action('admin_menu', array($this->admin, 'add_admin_menu'));
@@ -210,6 +213,71 @@ class Console_Error_Logger {
             'page_url' => isset($_SERVER['REQUEST_URI']) ? esc_url_raw(wp_unslash($_SERVER['REQUEST_URI'])) : '',
             'user_agent' => isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : ''
         ));
+    }
+    
+    /**
+     * Track user login for IP association
+     */
+    public function track_user_login($user_login, $user) {
+        $user_ip = $this->get_client_ip();
+        
+        // Track the IP-to-user mapping
+        $this->database->track_user_ip($user->ID, $user_ip);
+        
+        // Update any recent errors from this IP to associate with this user
+        $this->associate_recent_errors_with_user($user->ID, $user_ip);
+    }
+    
+    /**
+     * Associate recent errors with logged-in user
+     */
+    private function associate_recent_errors_with_user($user_id, $ip_address) {
+        global $wpdb;
+        
+        // Update errors from the last 30 minutes from this IP that don't have an associated user
+        $table_name = $this->database->get_table_name();
+        $result = $wpdb->query($wpdb->prepare(
+            "UPDATE {$table_name} 
+             SET associated_user_id = %d 
+             WHERE user_ip = %s 
+             AND associated_user_id IS NULL 
+             AND timestamp > DATE_SUB(NOW(), INTERVAL 30 MINUTE)",
+            $user_id, $ip_address
+        ));
+        
+        return $result;
+    }
+    
+    /**
+     * Get client IP address
+     */
+    private function get_client_ip() {
+        // Check for various IP address headers
+        $ip_headers = array(
+            'HTTP_CF_CONNECTING_IP',     // Cloudflare
+            'HTTP_X_FORWARDED_FOR',      // Load balancers/proxies
+            'HTTP_X_FORWARDED',          // Proxies
+            'HTTP_X_CLUSTER_CLIENT_IP',  // Cluster
+            'HTTP_CLIENT_IP',            // Proxy
+            'HTTP_FORWARDED_FOR',        // Proxies
+            'HTTP_FORWARDED',            // Proxies
+            'REMOTE_ADDR'                // Standard
+        );
+
+        foreach ($ip_headers as $header) {
+            if (!empty($_SERVER[$header])) {
+                $ips = explode(',', $_SERVER[$header]);
+                $ip = trim($ips[0]);
+                
+                // Validate IP address
+                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                    return $ip;
+                }
+            }
+        }
+        
+        // Return localhost if no valid IP found
+        return '127.0.0.1';
     }
 }
 
