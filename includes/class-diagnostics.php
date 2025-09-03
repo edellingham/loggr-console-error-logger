@@ -193,8 +193,16 @@ class CEL_Diagnostics {
                 // Check if CEL is loaded
                 if (typeof window.CEL !== 'undefined') {
                     jsHtml += '<li>CEL Object: <span class="status-good">Loaded</span></li>';
+                    jsHtml += '<li>CEL Initialized: <span class="' + (window.CEL.initialized ? 'status-good' : 'status-bad') + '">' + (window.CEL.initialized ? 'Yes' : 'No') + '</span></li>';
                 } else {
                     jsHtml += '<li>CEL Object: <span class="status-bad">Not Found</span></li>';
+                }
+                
+                // Check if CEL_Test is loaded
+                if (typeof window.CEL_Test !== 'undefined') {
+                    jsHtml += '<li>CEL_Test Functions: <span class="status-good">Available</span></li>';
+                } else {
+                    jsHtml += '<li>CEL_Test Functions: <span class="status-bad">Not Available</span></li>';
                 }
                 
                 // Check if cel_ajax is configured

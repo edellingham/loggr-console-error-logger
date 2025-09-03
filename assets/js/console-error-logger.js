@@ -566,6 +566,9 @@
         console.log('Console Error Logger initialized successfully');
         console.log('CEL: Configuration:', cel_ajax);
         
+        // Expose CEL object globally for diagnostics
+        window.CEL = CEL;
+        
         // Add test functions to window for manual testing
         window.CEL_Test = {
             triggerJSError: function() {
