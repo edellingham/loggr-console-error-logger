@@ -122,6 +122,10 @@ class CEL_Admin {
                    class="nav-tab <?php echo $current_tab === 'settings' ? 'nav-tab-active' : ''; ?>">
                     <?php _e('Settings', 'console-error-logger'); ?>
                 </a>
+                <a href="?page=console-error-logger&tab=diagnostics" 
+                   class="nav-tab <?php echo $current_tab === 'diagnostics' ? 'nav-tab-active' : ''; ?>">
+                    <?php _e('🔧 Diagnostics', 'console-error-logger'); ?>
+                </a>
             </nav>
             
             <div class="tab-content">
@@ -132,6 +136,9 @@ class CEL_Admin {
                         break;
                     case 'settings':
                         $this->render_settings_tab();
+                        break;
+                    case 'diagnostics':
+                        $this->render_diagnostics_tab();
                         break;
                     default:
                         $this->render_logs_tab();
@@ -713,5 +720,14 @@ class CEL_Admin {
      */
     private function render_admin_notices() {
         settings_errors('cel_settings');
+    }
+    
+    /**
+     * Render diagnostics tab
+     */
+    private function render_diagnostics_tab() {
+        // Get diagnostics instance
+        $diagnostics = new CEL_Diagnostics();
+        $diagnostics->render_diagnostics_content();
     }
 }

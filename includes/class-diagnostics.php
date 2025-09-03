@@ -14,9 +14,6 @@ class CEL_Diagnostics {
     public function __construct() {
         $this->database = new CEL_Database();
         
-        // Add debug menu item
-        add_action('admin_menu', array($this, 'add_debug_menu'), 20);
-        
         // Add AJAX handlers for diagnostics
         add_action('wp_ajax_cel_run_diagnostic', array($this, 'handle_diagnostic_ajax'));
         add_action('wp_ajax_cel_test_pipeline', array($this, 'handle_test_pipeline'));
@@ -24,26 +21,20 @@ class CEL_Diagnostics {
     }
     
     /**
-     * Add debug submenu under Tools > Console Errors
+     * Get diagnostics tab content
      */
-    public function add_debug_menu() {
-        add_submenu_page(
-            'console-error-logger',
-            __('Error Logger Diagnostics', 'console-error-logger'),
-            __('🔧 Diagnostics', 'console-error-logger'),
-            'manage_options',
-            'cel-diagnostics',
-            array($this, 'render_diagnostics_page')
-        );
+    public function get_diagnostics_tab_content() {
+        ob_start();
+        $this->render_diagnostics_content();
+        return ob_get_clean();
     }
     
     /**
-     * Render diagnostics page
+     * Render diagnostics content (for tab integration)
      */
-    public function render_diagnostics_page() {
+    public function render_diagnostics_content() {
         ?>
-        <div class="wrap">
-            <h1><?php echo esc_html__('Console Error Logger - Diagnostics', 'console-error-logger'); ?></h1>
+            <h2><?php echo esc_html__('Diagnostics & Debug Tools', 'console-error-logger'); ?></h2>
             
             <div class="cel-diagnostics-container">
                 <!-- System Status -->
