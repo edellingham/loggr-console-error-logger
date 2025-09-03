@@ -29,6 +29,7 @@ define('CEL_PLUGIN_BASENAME', plugin_basename(__FILE__));
 require_once CEL_PLUGIN_DIR . 'includes/class-database.php';
 require_once CEL_PLUGIN_DIR . 'includes/class-error-logger.php';
 require_once CEL_PLUGIN_DIR . 'includes/class-admin.php';
+require_once CEL_PLUGIN_DIR . 'includes/class-diagnostics.php';
 
 /**
  * Main plugin class
@@ -56,6 +57,11 @@ class Console_Error_Logger {
     private $admin;
     
     /**
+     * Diagnostics handler
+     */
+    private $diagnostics;
+    
+    /**
      * Get singleton instance
      */
     public static function get_instance() {
@@ -73,6 +79,7 @@ class Console_Error_Logger {
         $this->database = new CEL_Database();
         $this->error_logger = new CEL_Error_Logger();
         $this->admin = new CEL_Admin();
+        $this->diagnostics = new CEL_Diagnostics();
         
         // Set up hooks
         $this->init_hooks();

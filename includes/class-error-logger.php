@@ -20,20 +20,38 @@ class CEL_Error_Logger {
      */
     public function __construct() {
         $this->database = new CEL_Database();
+        
+        // Add debug logging if WP_DEBUG is enabled
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            add_action('cel_debug_log', array($this, 'debug_log'), 10, 2);
+        }
+    }
+    
+    /**
+     * Debug logging
+     */
+    public function debug_log($message, $data = null) {
+        if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+            error_log('[CEL Debug] ' . $message . ($data ? ' - Data: ' . print_r($data, true) : ''));
+        }
     }
     
     /**
      * Handle AJAX error logging request
      */
     public function handle_ajax_log_error() {
+        $this->debug_log('AJAX request received', $_POST);
+        
         // Verify nonce
         if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'cel_log_error_nonce')) {
+            $this->debug_log('Nonce verification failed', array('nonce' => $_POST['nonce'] ?? 'not set'));
             wp_send_json_error(array('message' => __('Invalid security token', 'console-error-logger')));
             return;
         }
         
         // Check if we have error data
         if (!isset($_POST['error_data']) || empty($_POST['error_data'])) {
+            $this->debug_log('No error data provided');
             wp_send_json_error(array('message' => __('No error data provided', 'console-error-logger')));
             return;
         }
@@ -42,12 +60,16 @@ class CEL_Error_Logger {
         $error_data = json_decode(wp_unslash($_POST['error_data']), true);
         
         if (!$error_data) {
+            $this->debug_log('Invalid JSON format', $_POST['error_data']);
             wp_send_json_error(array('message' => __('Invalid error data format', 'console-error-logger')));
             return;
         }
         
+        $this->debug_log('Parsed error data', $error_data);
+        
         // Validate required fields
         if (!isset($error_data['error_type']) || !isset($error_data['error_message'])) {
+            $this->debug_log('Missing required fields', $error_data);
             wp_send_json_error(array('message' => __('Missing required error fields', 'console-error-logger')));
             return;
         }

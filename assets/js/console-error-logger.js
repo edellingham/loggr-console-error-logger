@@ -7,11 +7,28 @@
 (function($) {
     'use strict';
     
+    // Debug mode flag
+    const DEBUG = true; // Set to false in production
+    
+    // Debug logging function
+    function debug(message, data) {
+        if (DEBUG && window.console) {
+            console.log('[CEL Debug] ' + message, data || '');
+        }
+    }
+    
     // Early exit if required objects are not available
     if (typeof $ === 'undefined' || typeof cel_ajax === 'undefined') {
-        console.warn('Console Error Logger: Required dependencies not loaded');
+        console.error('Console Error Logger: CRITICAL - Required dependencies not loaded');
+        console.error('jQuery loaded:', typeof $ !== 'undefined');
+        console.error('cel_ajax loaded:', typeof cel_ajax !== 'undefined');
         return;
     }
+    
+    debug('Initializing Console Error Logger', {
+        jquery: $.fn.jquery,
+        ajax_config: cel_ajax
+    });
     
     // Configuration
     const CEL = {
