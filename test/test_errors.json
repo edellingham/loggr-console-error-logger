@@ -49,5 +49,22 @@
         "is_login_page": false,
         "additional_data": null,
         "id": 3
+    },
+    {
+        "timestamp": "2025-09-03 18:35:43",
+        "error_type": "javascript_error",
+        "error_message": "TypeError: errors.forEach is not a function",
+        "error_source": "http:\/\/localhost:8080\/",
+        "error_line": 594,
+        "error_column": 28,
+        "stack_trace": "refreshLog\/",
+        "user_agent": "Mozilla\/5.0 (X11; Linux x86_64; rv:142.0) Gecko\/20100101 Firefox\/142.0",
+        "page_url": "http:\/\/localhost:8080\/",
+        "user_ip": "127.0.0.1",
+        "user_id": 1,
+        "session_id": "cel_1756919465792_y3qxlcfia5te",
+        "is_login_page": false,
+        "additional_data": null,
+        "id": 4
     }
 ]

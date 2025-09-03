@@ -387,11 +387,4 @@ class CEL_Database {
         // Return localhost if no valid IP found
         return '127.0.0.1';
     }
-    
-    /**
-     * Get table name
-     */
-    public function get_table_name() {
-        return $this->table_name;
-    }
 }
