@@ -119,6 +119,8 @@ class Console_Error_Logger {
             add_action('admin_enqueue_scripts', array($this->admin, 'enqueue_admin_scripts'));
             add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_error_logger'));
             add_action('wp_ajax_cel_clear_logs', array($this->admin, 'handle_clear_logs'));
+            add_action('wp_ajax_cel_create_tables', array($this, 'handle_manual_table_creation'));
+            add_action('admin_notices', array($this, 'show_activation_notices'));
         }
     }
     
@@ -126,8 +128,13 @@ class Console_Error_Logger {
      * Plugin activation
      */
     public function activate() {
-        // Create database table
-        $this->database->create_table();
+        // Create database tables with error checking
+        $table_success = $this->database->create_table();
+        
+        // Log activation attempt
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('CEL: Plugin activation - Table creation ' . ($table_success ? 'succeeded' : 'failed'));
+        }
         
         // Set default options
         add_option('cel_version', CEL_VERSION);
@@ -139,8 +146,17 @@ class Console_Error_Logger {
             'auto_cleanup_days' => 30
         ));
         
+        // Store activation status for admin notice
+        if (!$table_success) {
+            add_option('cel_activation_error', 'Database table creation failed. Please check WordPress debug logs or contact support.');
+        } else {
+            delete_option('cel_activation_error'); // Clear any previous errors
+        }
+        
         // Clear rewrite rules
         flush_rewrite_rules();
+        
+        return $table_success;
     }
     
     /**
@@ -279,6 +295,83 @@ class Console_Error_Logger {
         ));
         
         return $result;
+    }
+    
+    /**
+     * Show activation notices
+     */
+    public function show_activation_notices() {
+        $activation_error = get_option('cel_activation_error');
+        if ($activation_error) {
+            ?>
+            <div class="notice notice-error is-dismissible">
+                <p><strong>Loggr Plugin:</strong> <?php echo esc_html($activation_error); ?></p>
+                <p>
+                    <button type="button" class="button button-primary" id="cel-create-tables">
+                        Create Tables Manually
+                    </button>
+                    <a href="<?php echo esc_url(admin_url('tools.php?page=console-error-logger&tab=diagnostics')); ?>" class="button">
+                        View Diagnostics
+                    </a>
+                </p>
+            </div>
+            <script>
+            jQuery(document).ready(function($) {
+                $('#cel-create-tables').click(function() {
+                    var button = $(this);
+                    button.prop('disabled', true).text('Creating Tables...');
+                    
+                    $.post(ajaxurl, {
+                        action: 'cel_create_tables',
+                        nonce: '<?php echo wp_create_nonce('cel_admin_nonce'); ?>'
+                    }, function(response) {
+                        if (response.success) {
+                            button.closest('.notice').removeClass('notice-error').addClass('notice-success');
+                            button.closest('.notice').find('p:first').html('<strong>Loggr Plugin:</strong> Database tables created successfully!');
+                            button.remove();
+                            setTimeout(function() {
+                                location.reload();
+                            }, 2000);
+                        } else {
+                            button.prop('disabled', false).text('Create Tables Manually');
+                            alert('Failed to create tables: ' + (response.data.message || 'Unknown error'));
+                        }
+                    }).fail(function() {
+                        button.prop('disabled', false).text('Create Tables Manually');
+                        alert('AJAX request failed. Please try again.');
+                    });
+                });
+            });
+            </script>
+            <?php
+        }
+    }
+    
+    /**
+     * Handle manual table creation via AJAX
+     */
+    public function handle_manual_table_creation() {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'cel_admin_nonce')) {
+            wp_send_json_error(array('message' => 'Invalid security token'));
+            return;
+        }
+        
+        // Check permissions
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
+            return;
+        }
+        
+        // Attempt to create tables
+        $success = $this->database->create_table();
+        
+        if ($success) {
+            delete_option('cel_activation_error');
+            wp_send_json_success(array('message' => 'Database tables created successfully!'));
+        } else {
+            wp_send_json_error(array('message' => 'Failed to create database tables. Check debug logs for details.'));
+        }
     }
     
     /**

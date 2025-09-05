@@ -83,10 +83,6 @@ class CEL_Database {
             KEY last_seen (last_seen)
         ) $charset_collate;";
         
-        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-        dbDelta($sql);
-        dbDelta($mapping_sql);
-        
         // Create ignore patterns table
         $ignore_table = $this->wpdb->prefix . 'console_errors_ignore_patterns';
         $ignore_sql = "CREATE TABLE {$ignore_table} (
@@ -102,10 +98,116 @@ class CEL_Database {
             KEY is_active (is_active)
         ) $charset_collate;";
         
-        dbDelta($ignore_sql);
+        // Load WordPress upgrade functions
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         
-        // Update database version to trigger index creation on upgrade
+        // Debug logging
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('CEL: Starting table creation process...');
+            error_log('CEL: Table prefix: ' . $this->wpdb->prefix);
+            error_log('CEL: Charset collate: ' . $charset_collate);
+        }
+        
+        // Create tables with dbDelta
+        $result1 = dbDelta($sql);
+        $result2 = dbDelta($mapping_sql);
+        $result3 = dbDelta($ignore_sql);
+        
+        // Log dbDelta results
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('CEL: Main table dbDelta result: ' . print_r($result1, true));
+            error_log('CEL: Mapping table dbDelta result: ' . print_r($result2, true));
+            error_log('CEL: Ignore table dbDelta result: ' . print_r($result3, true));
+        }
+        
+        // Verify table creation
+        $main_exists = $this->wpdb->get_var($this->wpdb->prepare("SHOW TABLES LIKE %s", $this->table_name)) === $this->table_name;
+        $mapping_exists = $this->wpdb->get_var($this->wpdb->prepare("SHOW TABLES LIKE %s", $mapping_table)) === $mapping_table;
+        $ignore_exists = $this->wpdb->get_var($this->wpdb->prepare("SHOW TABLES LIKE %s", $ignore_table)) === $ignore_table;
+        
+        // If dbDelta failed, try direct SQL
+        if (!$main_exists) {
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log('CEL: Main table missing, attempting direct SQL creation...');
+            }
+            $this->wpdb->query($sql);
+            $main_exists = $this->wpdb->get_var($this->wpdb->prepare("SHOW TABLES LIKE %s", $this->table_name)) === $this->table_name;
+        }
+        
+        if (!$mapping_exists) {
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log('CEL: Mapping table missing, attempting direct SQL creation...');
+            }
+            $this->wpdb->query($mapping_sql);
+            $mapping_exists = $this->wpdb->get_var($this->wpdb->prepare("SHOW TABLES LIKE %s", $mapping_table)) === $mapping_table;
+        }
+        
+        if (!$ignore_exists) {
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log('CEL: Ignore table missing, attempting direct SQL creation...');
+            }
+            $this->wpdb->query($ignore_sql);
+            $ignore_exists = $this->wpdb->get_var($this->wpdb->prepare("SHOW TABLES LIKE %s", $ignore_table)) === $ignore_table;
+        }
+        
+        // Log any database errors
+        if ($this->wpdb->last_error) {
+            error_log('CEL: Database error during table creation: ' . $this->wpdb->last_error);
+        }
+        
+        // Log final status
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('CEL: Final table status - Main: ' . ($main_exists ? 'EXISTS' : 'FAILED'));
+            error_log('CEL: Final table status - Mapping: ' . ($mapping_exists ? 'EXISTS' : 'FAILED'));
+            error_log('CEL: Final table status - Ignore: ' . ($ignore_exists ? 'EXISTS' : 'FAILED'));
+        }
+        
+        // Add performance indexes after table creation
+        $this->add_performance_indexes();
+        
+        // Update database version
         update_option('cel_db_version', '1.3.0');
+        
+        // Return success status
+        return $main_exists && $mapping_exists && $ignore_exists;
+    }
+    
+    /**
+     * Add performance indexes to existing table
+     */
+    private function add_performance_indexes() {
+        // Performance indexes for optimized queries
+        $indexes = array(
+            'idx_rate_limiting' => "ALTER TABLE {$this->table_name} ADD INDEX idx_rate_limiting (user_ip, timestamp)",
+            'idx_type_timestamp' => "ALTER TABLE {$this->table_name} ADD INDEX idx_type_timestamp (error_type, timestamp)",
+            'idx_login_timestamp' => "ALTER TABLE {$this->table_name} ADD INDEX idx_login_timestamp (is_login_page, timestamp)",
+            'idx_user_timestamp' => "ALTER TABLE {$this->table_name} ADD INDEX idx_user_timestamp (user_id, timestamp)",
+            'idx_stats_composite' => "ALTER TABLE {$this->table_name} ADD INDEX idx_stats_composite (error_type, is_login_page, timestamp)",
+            'idx_analytics' => "ALTER TABLE {$this->table_name} ADD INDEX idx_analytics (timestamp, error_type, user_ip)"
+        );
+        
+        foreach ($indexes as $index_name => $sql) {
+            // Check if index already exists
+            $index_exists = $this->wpdb->get_var($this->wpdb->prepare(
+                "SELECT COUNT(1) FROM INFORMATION_SCHEMA.STATISTICS 
+                 WHERE table_schema = DATABASE() 
+                 AND table_name = %s 
+                 AND index_name = %s",
+                $this->table_name,
+                $index_name
+            ));
+            
+            if (!$index_exists) {
+                $result = $this->wpdb->query($sql);
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    if ($result === false) {
+                        error_log("CEL: Failed to create index {$index_name}: " . $this->wpdb->last_error);
+                    } else {
+                        error_log("CEL: Successfully created index {$index_name}");
+                    }
+                }
+            }
+        }
     }
     
     /**
