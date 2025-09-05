@@ -30,146 +30,572 @@ class CEL_Database {
     }
     
     /**
-     * Create database table
+     * Create database table with enhanced error handling and logging
      */
     public function create_table() {
-        $charset_collate = $this->wpdb->get_charset_collate();
+        $this->log_system_info();
         
-        $sql = "CREATE TABLE {$this->table_name} (
-            id MEDIUMINT(9) NOT NULL AUTO_INCREMENT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            error_type VARCHAR(50) NOT NULL,
-            error_message TEXT NOT NULL,
-            error_source VARCHAR(255),
-            error_line INT,
-            error_column INT,
-            stack_trace TEXT,
-            user_agent TEXT,
-            page_url VARCHAR(255),
-            user_ip VARCHAR(45),
-            user_id BIGINT(20) UNSIGNED DEFAULT NULL,
-            associated_user_id BIGINT(20) UNSIGNED DEFAULT NULL,
-            session_id VARCHAR(255),
-            is_login_page TINYINT(1) DEFAULT 0,
-            additional_data TEXT,
-            PRIMARY KEY (id),
-            KEY timestamp (timestamp),
-            KEY error_type (error_type),
-            KEY user_ip (user_ip),
-            KEY user_id (user_id),
-            KEY associated_user_id (associated_user_id),
-            KEY is_login_page (is_login_page),
-            KEY idx_rate_limiting (user_ip, timestamp),
-            KEY idx_type_timestamp (error_type, timestamp),
-            KEY idx_login_timestamp (is_login_page, timestamp),
-            KEY idx_user_timestamp (user_id, timestamp),
-            KEY idx_stats_composite (error_type, is_login_page, timestamp),
-            KEY idx_analytics (timestamp, error_type, user_ip)
-        ) $charset_collate;";
+        // Get charset and collation with fallback
+        $charset_collate = $this->get_safe_charset_collate();
         
-        // Create IP-to-user mapping table
-        $mapping_table = $this->wpdb->prefix . 'console_errors_ip_mapping';
-        $mapping_sql = "CREATE TABLE {$mapping_table} (
-            id MEDIUMINT(9) NOT NULL AUTO_INCREMENT,
-            ip_address VARCHAR(45) NOT NULL,
-            user_id BIGINT(20) UNSIGNED NOT NULL,
-            first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
-            last_seen DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            login_count INT DEFAULT 1,
-            PRIMARY KEY (id),
-            UNIQUE KEY ip_user (ip_address, user_id),
-            KEY ip_address (ip_address),
-            KEY user_id (user_id),
-            KEY last_seen (last_seen)
-        ) $charset_collate;";
-        
-        // Create ignore patterns table
-        $ignore_table = $this->wpdb->prefix . 'console_errors_ignore_patterns';
-        $ignore_sql = "CREATE TABLE {$ignore_table} (
-            id MEDIUMINT(9) NOT NULL AUTO_INCREMENT,
-            pattern_type VARCHAR(50) NOT NULL,
-            pattern_value TEXT NOT NULL,
-            is_active TINYINT(1) DEFAULT 1,
-            notes TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            PRIMARY KEY (id),
-            KEY pattern_type (pattern_type),
-            KEY is_active (is_active)
-        ) $charset_collate;";
+        // Define table structures
+        $tables = $this->get_table_definitions($charset_collate);
         
         // Load WordPress upgrade functions
-        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        $this->ensure_upgrade_functions();
         
-        // Debug logging
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('CEL: Starting table creation process...');
-            error_log('CEL: Table prefix: ' . $this->wpdb->prefix);
-            error_log('CEL: Charset collate: ' . $charset_collate);
-        }
+        // Track creation attempts
+        $creation_log = array();
+        $creation_success = true;
         
-        // Create tables with dbDelta
-        $result1 = dbDelta($sql);
-        $result2 = dbDelta($mapping_sql);
-        $result3 = dbDelta($ignore_sql);
-        
-        // Log dbDelta results
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('CEL: Main table dbDelta result: ' . print_r($result1, true));
-            error_log('CEL: Mapping table dbDelta result: ' . print_r($result2, true));
-            error_log('CEL: Ignore table dbDelta result: ' . print_r($result3, true));
-        }
-        
-        // Verify table creation
-        $main_exists = $this->wpdb->get_var($this->wpdb->prepare("SHOW TABLES LIKE %s", $this->table_name)) === $this->table_name;
-        $mapping_exists = $this->wpdb->get_var($this->wpdb->prepare("SHOW TABLES LIKE %s", $mapping_table)) === $mapping_table;
-        $ignore_exists = $this->wpdb->get_var($this->wpdb->prepare("SHOW TABLES LIKE %s", $ignore_table)) === $ignore_table;
-        
-        // If dbDelta failed, try direct SQL
-        if (!$main_exists) {
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('CEL: Main table missing, attempting direct SQL creation...');
+        // Create each table with comprehensive error handling
+        foreach ($tables as $table_key => $table_info) {
+            $table_result = $this->create_single_table(
+                $table_info['name'],
+                $table_info['sql'],
+                $table_key
+            );
+            
+            $creation_log[$table_key] = $table_result;
+            if (!$table_result['success']) {
+                $creation_success = false;
             }
-            $this->wpdb->query($sql);
-            $main_exists = $this->wpdb->get_var($this->wpdb->prepare("SHOW TABLES LIKE %s", $this->table_name)) === $this->table_name;
         }
         
-        if (!$mapping_exists) {
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('CEL: Mapping table missing, attempting direct SQL creation...');
+        // Log comprehensive creation results
+        $this->log_creation_results($creation_log, $creation_success);
+        
+        // Store detailed failure information for admin review
+        if (!$creation_success) {
+            $this->store_creation_failure_details($creation_log);
+        } else {
+            // Clear any previous failure details
+            delete_option('cel_table_creation_failures');
+        }
+        
+        // Add performance indexes if main table exists
+        if ($creation_log['main']['success']) {
+            $this->add_performance_indexes();
+        }
+        
+        // Update database version only if all tables created successfully
+        if ($creation_success) {
+            update_option('cel_db_version', '1.3.1');
+            update_option('cel_tables_created', time());
+        }
+        
+        return $creation_success;
+    }
+    
+    /**
+     * Log comprehensive system information for debugging
+     */
+    private function log_system_info() {
+        if (!$this->should_log_debug()) {
+            return;
+        }
+        
+        global $wp_version;
+        
+        error_log('CEL: =================================');
+        error_log('CEL: STARTING TABLE CREATION PROCESS');
+        error_log('CEL: =================================');
+        error_log('CEL: WordPress Version: ' . $wp_version);
+        error_log('CEL: PHP Version: ' . PHP_VERSION);
+        error_log('CEL: MySQL Version: ' . $this->wpdb->db_version());
+        error_log('CEL: Table Prefix: ' . $this->wpdb->prefix);
+        error_log('CEL: Database Name: ' . DB_NAME);
+        error_log('CEL: Database Host: ' . DB_HOST);
+        error_log('CEL: Database Charset: ' . DB_CHARSET);
+        error_log('CEL: Database Collate: ' . DB_COLLATE);
+        error_log('CEL: Current User Can: ' . (current_user_can('activate_plugins') ? 'activate_plugins' : 'limited'));
+        error_log('CEL: WordPress Memory Limit: ' . WP_MEMORY_LIMIT);
+        error_log('CEL: PHP Memory Limit: ' . ini_get('memory_limit'));
+        error_log('CEL: Max Execution Time: ' . ini_get('max_execution_time'));
+        
+        // Test basic database connectivity
+        $test_query = $this->wpdb->get_var("SELECT 1");
+        error_log('CEL: Database Connectivity Test: ' . ($test_query === '1' ? 'PASSED' : 'FAILED'));
+        
+        // Check if we can see existing WordPress tables
+        $wp_tables = $this->wpdb->get_var("SHOW TABLES LIKE '{$this->wpdb->prefix}options'");
+        error_log('CEL: WordPress Tables Visible: ' . ($wp_tables ? 'YES' : 'NO'));
+        
+        error_log('CEL: =================================');
+    }
+    
+    /**
+     * Get safe charset and collation with fallbacks
+     */
+    private function get_safe_charset_collate() {
+        $charset_collate = $this->wpdb->get_charset_collate();
+        
+        // If get_charset_collate() returns empty, build manually
+        if (empty($charset_collate)) {
+            $charset = !empty(DB_CHARSET) ? DB_CHARSET : 'utf8';
+            $collate = !empty(DB_COLLATE) ? DB_COLLATE : 'utf8_general_ci';
+            $charset_collate = "DEFAULT CHARACTER SET {$charset} COLLATE {$collate}";
+        }
+        
+        if ($this->should_log_debug()) {
+            error_log('CEL: Charset Collate: ' . $charset_collate);
+        }
+        
+        return $charset_collate;
+    }
+    
+    /**
+     * Get table definitions
+     */
+    private function get_table_definitions($charset_collate) {
+        $tables = array();
+        
+        // Main errors table
+        $tables['main'] = array(
+            'name' => $this->table_name,
+            'sql' => "CREATE TABLE {$this->table_name} (
+                id MEDIUMINT(9) NOT NULL AUTO_INCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                error_type VARCHAR(50) NOT NULL,
+                error_message TEXT NOT NULL,
+                error_source VARCHAR(255),
+                error_line INT,
+                error_column INT,
+                stack_trace TEXT,
+                user_agent TEXT,
+                page_url VARCHAR(255),
+                user_ip VARCHAR(45),
+                user_id BIGINT(20) UNSIGNED DEFAULT NULL,
+                associated_user_id BIGINT(20) UNSIGNED DEFAULT NULL,
+                session_id VARCHAR(255),
+                is_login_page TINYINT(1) DEFAULT 0,
+                additional_data TEXT,
+                PRIMARY KEY (id),
+                KEY timestamp (timestamp),
+                KEY error_type (error_type),
+                KEY user_ip (user_ip),
+                KEY user_id (user_id),
+                KEY associated_user_id (associated_user_id),
+                KEY is_login_page (is_login_page)
+            ) {$charset_collate};"
+        );
+        
+        // IP mapping table
+        $mapping_table = $this->wpdb->prefix . 'console_errors_ip_mapping';
+        $tables['mapping'] = array(
+            'name' => $mapping_table,
+            'sql' => "CREATE TABLE {$mapping_table} (
+                id MEDIUMINT(9) NOT NULL AUTO_INCREMENT,
+                ip_address VARCHAR(45) NOT NULL,
+                user_id BIGINT(20) UNSIGNED NOT NULL,
+                first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+                login_count INT DEFAULT 1,
+                PRIMARY KEY (id),
+                UNIQUE KEY ip_user (ip_address, user_id),
+                KEY ip_address (ip_address),
+                KEY user_id (user_id),
+                KEY last_seen (last_seen)
+            ) {$charset_collate};"
+        );
+        
+        // Ignore patterns table
+        $ignore_table = $this->wpdb->prefix . 'console_errors_ignore_patterns';
+        $tables['ignore'] = array(
+            'name' => $ignore_table,
+            'sql' => "CREATE TABLE {$ignore_table} (
+                id MEDIUMINT(9) NOT NULL AUTO_INCREMENT,
+                pattern_type VARCHAR(50) NOT NULL,
+                pattern_value TEXT NOT NULL,
+                is_active TINYINT(1) DEFAULT 1,
+                notes TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                KEY pattern_type (pattern_type),
+                KEY is_active (is_active)
+            ) {$charset_collate};"
+        );
+        
+        return $tables;
+    }
+    
+    /**
+     * Ensure WordPress upgrade functions are available
+     */
+    private function ensure_upgrade_functions() {
+        if (!function_exists('dbDelta')) {
+            $upgrade_file = ABSPATH . 'wp-admin/includes/upgrade.php';
+            
+            if ($this->should_log_debug()) {
+                error_log('CEL: Checking upgrade.php at: ' . $upgrade_file);
+                error_log('CEL: File exists: ' . (file_exists($upgrade_file) ? 'YES' : 'NO'));
+                if (file_exists($upgrade_file)) {
+                    error_log('CEL: File readable: ' . (is_readable($upgrade_file) ? 'YES' : 'NO'));
+                }
             }
-            $this->wpdb->query($mapping_sql);
-            $mapping_exists = $this->wpdb->get_var($this->wpdb->prepare("SHOW TABLES LIKE %s", $mapping_table)) === $mapping_table;
-        }
-        
-        if (!$ignore_exists) {
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('CEL: Ignore table missing, attempting direct SQL creation...');
+            
+            require_once($upgrade_file);
+            
+            if ($this->should_log_debug()) {
+                error_log('CEL: dbDelta function available: ' . (function_exists('dbDelta') ? 'YES' : 'NO'));
             }
-            $this->wpdb->query($ignore_sql);
-            $ignore_exists = $this->wpdb->get_var($this->wpdb->prepare("SHOW TABLES LIKE %s", $ignore_table)) === $ignore_table;
+        }
+    }
+    
+    /**
+     * Create a single table with comprehensive error handling
+     */
+    private function create_single_table($table_name, $table_sql, $table_key) {
+        $result = array(
+            'name' => $table_name,
+            'success' => false,
+            'method_used' => '',
+            'attempts' => array(),
+            'final_error' => ''
+        );
+        
+        if ($this->should_log_debug()) {
+            error_log("CEL: Creating {$table_key} table: {$table_name}");
         }
         
-        // Log any database errors
-        if ($this->wpdb->last_error) {
-            error_log('CEL: Database error during table creation: ' . $this->wpdb->last_error);
+        // Method 1: Try dbDelta first
+        $result['attempts']['dbdelta'] = $this->try_dbdelta_creation($table_sql, $table_name, $table_key);
+        if ($result['attempts']['dbdelta']['success']) {
+            $result['success'] = true;
+            $result['method_used'] = 'dbDelta';
+            return $result;
         }
         
-        // Log final status
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('CEL: Final table status - Main: ' . ($main_exists ? 'EXISTS' : 'FAILED'));
-            error_log('CEL: Final table status - Mapping: ' . ($mapping_exists ? 'EXISTS' : 'FAILED'));
-            error_log('CEL: Final table status - Ignore: ' . ($ignore_exists ? 'EXISTS' : 'FAILED'));
+        // Method 2: Try direct SQL query
+        $result['attempts']['direct'] = $this->try_direct_sql_creation($table_sql, $table_name, $table_key);
+        if ($result['attempts']['direct']['success']) {
+            $result['success'] = true;
+            $result['method_used'] = 'direct_sql';
+            return $result;
         }
         
-        // Add performance indexes after table creation
-        $this->add_performance_indexes();
+        // Method 3: Try simplified table structure
+        $result['attempts']['simplified'] = $this->try_simplified_creation($table_name, $table_key);
+        if ($result['attempts']['simplified']['success']) {
+            $result['success'] = true;
+            $result['method_used'] = 'simplified';
+            return $result;
+        }
         
-        // Update database version
-        update_option('cel_db_version', '1.3.0');
+        // All methods failed
+        $result['final_error'] = $this->wpdb->last_error ?: 'Unknown database error';
         
-        // Return success status
-        return $main_exists && $mapping_exists && $ignore_exists;
+        if ($this->should_log_debug()) {
+            error_log("CEL: All creation methods failed for {$table_key} table");
+            error_log("CEL: Final error: {$result['final_error']}");
+        }
+        
+        return $result;
+    }
+    
+    /**
+     * Try creating table with dbDelta
+     */
+    private function try_dbdelta_creation($table_sql, $table_name, $table_key) {
+        $attempt = array('success' => false, 'error' => '', 'method' => 'dbDelta');
+        
+        try {
+            // Clear any previous errors
+            $this->wpdb->last_error = '';
+            
+            $dbdelta_result = dbDelta($table_sql);
+            
+            if ($this->should_log_debug()) {
+                error_log("CEL: dbDelta result for {$table_key}: " . print_r($dbdelta_result, true));
+            }
+            
+            // Check if table was created
+            $table_exists = $this->table_exists($table_name);
+            
+            if ($table_exists) {
+                $attempt['success'] = true;
+                if ($this->should_log_debug()) {
+                    error_log("CEL: dbDelta successfully created {$table_key} table");
+                }
+            } else {
+                $attempt['error'] = $this->wpdb->last_error ?: 'dbDelta completed but table not found';
+                if ($this->should_log_debug()) {
+                    error_log("CEL: dbDelta failed for {$table_key}: {$attempt['error']}");
+                }
+            }
+        } catch (Exception $e) {
+            $attempt['error'] = 'dbDelta exception: ' . $e->getMessage();
+            if ($this->should_log_debug()) {
+                error_log("CEL: dbDelta exception for {$table_key}: {$attempt['error']}");
+            }
+        }
+        
+        return $attempt;
+    }
+    
+    /**
+     * Try creating table with direct SQL
+     */
+    private function try_direct_sql_creation($table_sql, $table_name, $table_key) {
+        $attempt = array('success' => false, 'error' => '', 'method' => 'direct_sql');
+        
+        try {
+            // Clear any previous errors
+            $this->wpdb->last_error = '';
+            
+            $query_result = $this->wpdb->query($table_sql);
+            
+            if ($this->should_log_debug()) {
+                error_log("CEL: Direct SQL result for {$table_key}: " . ($query_result !== false ? 'SUCCESS' : 'FAILED'));
+            }
+            
+            if ($query_result !== false) {
+                $table_exists = $this->table_exists($table_name);
+                
+                if ($table_exists) {
+                    $attempt['success'] = true;
+                    if ($this->should_log_debug()) {
+                        error_log("CEL: Direct SQL successfully created {$table_key} table");
+                    }
+                } else {
+                    $attempt['error'] = 'Direct SQL succeeded but table not found';
+                }
+            } else {
+                $attempt['error'] = $this->wpdb->last_error ?: 'Direct SQL query failed';
+            }
+        } catch (Exception $e) {
+            $attempt['error'] = 'Direct SQL exception: ' . $e->getMessage();
+            if ($this->should_log_debug()) {
+                error_log("CEL: Direct SQL exception for {$table_key}: {$attempt['error']}");
+            }
+        }
+        
+        return $attempt;
+    }
+    
+    /**
+     * Try creating table with simplified structure
+     */
+    private function try_simplified_creation($table_name, $table_key) {
+        $attempt = array('success' => false, 'error' => '', 'method' => 'simplified');
+        
+        // Only try simplified creation for main table
+        if ($table_key !== 'main') {
+            $attempt['error'] = 'Simplified creation only available for main table';
+            return $attempt;
+        }
+        
+        try {
+            // Create minimal table structure without complex indexes
+            $simplified_sql = "CREATE TABLE {$table_name} (
+                id MEDIUMINT(9) NOT NULL AUTO_INCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                error_type VARCHAR(50) NOT NULL DEFAULT '',
+                error_message TEXT NOT NULL,
+                error_source VARCHAR(255) DEFAULT NULL,
+                error_line INT DEFAULT NULL,
+                error_column INT DEFAULT NULL,
+                stack_trace TEXT DEFAULT NULL,
+                user_agent TEXT DEFAULT NULL,
+                page_url VARCHAR(255) DEFAULT NULL,
+                user_ip VARCHAR(45) DEFAULT NULL,
+                user_id BIGINT(20) UNSIGNED DEFAULT NULL,
+                associated_user_id BIGINT(20) UNSIGNED DEFAULT NULL,
+                session_id VARCHAR(255) DEFAULT NULL,
+                is_login_page TINYINT(1) DEFAULT 0,
+                additional_data TEXT DEFAULT NULL,
+                PRIMARY KEY (id)
+            ) DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;";
+            
+            $this->wpdb->last_error = '';
+            $query_result = $this->wpdb->query($simplified_sql);
+            
+            if ($query_result !== false) {
+                $table_exists = $this->table_exists($table_name);
+                
+                if ($table_exists) {
+                    $attempt['success'] = true;
+                    if ($this->should_log_debug()) {
+                        error_log("CEL: Simplified creation successfully created {$table_key} table");
+                        error_log("CEL: WARNING: Table created with basic structure only - some features may be limited");
+                    }
+                } else {
+                    $attempt['error'] = 'Simplified creation succeeded but table not found';
+                }
+            } else {
+                $attempt['error'] = $this->wpdb->last_error ?: 'Simplified creation failed';
+            }
+        } catch (Exception $e) {
+            $attempt['error'] = 'Simplified creation exception: ' . $e->getMessage();
+            if ($this->should_log_debug()) {
+                error_log("CEL: Simplified creation exception for {$table_key}: {$attempt['error']}");
+            }
+        }
+        
+        return $attempt;
+    }
+    
+    /**
+     * Check if table exists
+     */
+    private function table_exists($table_name) {
+        // Use SHOW TABLES for reliable existence check
+        $exists = $this->wpdb->get_var($this->wpdb->prepare("SHOW TABLES LIKE %s", $table_name));
+        return ($exists === $table_name);
+    }
+    
+    /**
+     * Log comprehensive creation results
+     */
+    private function log_creation_results($creation_log, $overall_success) {
+        if (!$this->should_log_debug()) {
+            return;
+        }
+        
+        error_log('CEL: =================================');
+        error_log('CEL: TABLE CREATION RESULTS');
+        error_log('CEL: =================================');
+        error_log('CEL: Overall Success: ' . ($overall_success ? 'YES' : 'NO'));
+        
+        foreach ($creation_log as $table_key => $result) {
+            error_log("CEL: {$table_key} table ({$result['name']}): " . ($result['success'] ? 'SUCCESS' : 'FAILED'));
+            
+            if ($result['success']) {
+                error_log("CEL:   - Method used: {$result['method_used']}");
+            } else {
+                error_log("CEL:   - Final error: {$result['final_error']}");
+                error_log("CEL:   - Attempts made:");
+                
+                foreach ($result['attempts'] as $method => $attempt) {
+                    $status = $attempt['success'] ? 'SUCCESS' : 'FAILED';
+                    error_log("CEL:     * {$method}: {$status}");
+                    if (!$attempt['success'] && !empty($attempt['error'])) {
+                        error_log("CEL:       Error: {$attempt['error']}");
+                    }
+                }
+            }
+        }
+        
+        error_log('CEL: =================================');
+    }
+    
+    /**
+     * Store detailed failure information for admin review
+     */
+    private function store_creation_failure_details($creation_log) {
+        $failure_details = array(
+            'timestamp' => current_time('mysql'),
+            'wp_version' => get_bloginfo('version'),
+            'php_version' => PHP_VERSION,
+            'mysql_version' => $this->wpdb->db_version(),
+            'table_prefix' => $this->wpdb->prefix,
+            'failures' => array()
+        );
+        
+        foreach ($creation_log as $table_key => $result) {
+            if (!$result['success']) {
+                $failure_details['failures'][$table_key] = array(
+                    'table_name' => $result['name'],
+                    'final_error' => $result['final_error'],
+                    'attempts' => $result['attempts']
+                );
+            }
+        }
+        
+        update_option('cel_table_creation_failures', $failure_details);
+    }
+    
+    /**
+     * Check if debug logging should be enabled
+     */
+    private function should_log_debug() {
+        return (defined('WP_DEBUG') && WP_DEBUG) || (defined('CEL_DEBUG') && CEL_DEBUG);
+    }
+    
+    /**
+     * Get detailed table creation status for diagnostics
+     */
+    public function get_table_status() {
+        $status = array();
+        
+        // Main table
+        $status['main'] = array(
+            'name' => $this->table_name,
+            'exists' => $this->table_exists($this->table_name),
+            'row_count' => 0,
+            'structure_valid' => false
+        );
+        
+        if ($status['main']['exists']) {
+            $status['main']['row_count'] = $this->wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}");
+            $status['main']['structure_valid'] = $this->validate_table_structure($this->table_name, 'main');
+        }
+        
+        // Mapping table
+        $mapping_table = $this->wpdb->prefix . 'console_errors_ip_mapping';
+        $status['mapping'] = array(
+            'name' => $mapping_table,
+            'exists' => $this->table_exists($mapping_table),
+            'row_count' => 0,
+            'structure_valid' => false
+        );
+        
+        if ($status['mapping']['exists']) {
+            $status['mapping']['row_count'] = $this->wpdb->get_var("SELECT COUNT(*) FROM {$mapping_table}");
+            $status['mapping']['structure_valid'] = $this->validate_table_structure($mapping_table, 'mapping');
+        }
+        
+        // Ignore patterns table
+        $ignore_table = $this->wpdb->prefix . 'console_errors_ignore_patterns';
+        $status['ignore'] = array(
+            'name' => $ignore_table,
+            'exists' => $this->table_exists($ignore_table),
+            'row_count' => 0,
+            'structure_valid' => false
+        );
+        
+        if ($status['ignore']['exists']) {
+            $status['ignore']['row_count'] = $this->wpdb->get_var("SELECT COUNT(*) FROM {$ignore_table}");
+            $status['ignore']['structure_valid'] = $this->validate_table_structure($ignore_table, 'ignore');
+        }
+        
+        return $status;
+    }
+    
+    /**
+     * Validate table structure
+     */
+    private function validate_table_structure($table_name, $table_type) {
+        $columns = $this->wpdb->get_results("SHOW COLUMNS FROM {$table_name}");
+        
+        if (empty($columns)) {
+            return false;
+        }
+        
+        $required_columns = array();
+        
+        switch ($table_type) {
+            case 'main':
+                $required_columns = array('id', 'timestamp', 'error_type', 'error_message');
+                break;
+            case 'mapping':
+                $required_columns = array('id', 'ip_address', 'user_id');
+                break;
+            case 'ignore':
+                $required_columns = array('id', 'pattern_type', 'pattern_value');
+                break;
+        }
+        
+        $existing_columns = array_column($columns, 'Field');
+        
+        foreach ($required_columns as $required) {
+            if (!in_array($required, $existing_columns)) {
+                return false;
+            }
+        }
+        
+        return true;
     }
     
     /**
@@ -1168,6 +1594,208 @@ class CEL_Database {
     }
     
     /**
+     * Force recreate tables (for manual admin intervention)
+     */
+    public function force_recreate_tables() {
+        if ($this->should_log_debug()) {
+            error_log('CEL: FORCE RECREATION: Starting manual table recreation process');
+        }
+        
+        // First, try to drop existing tables if they exist
+        $this->safely_drop_tables();
+        
+        // Wait a moment for the database to process the drops
+        usleep(500000); // 0.5 seconds
+        
+        // Now recreate the tables
+        $result = $this->create_table();
+        
+        if ($this->should_log_debug()) {
+            error_log('CEL: FORCE RECREATION: Process completed - ' . ($result ? 'SUCCESS' : 'FAILED'));
+        }
+        
+        return $result;
+    }
+    
+    /**
+     * Safely drop existing tables
+     */
+    private function safely_drop_tables() {
+        $tables_to_drop = array(
+            $this->table_name,
+            $this->wpdb->prefix . 'console_errors_ip_mapping',
+            $this->wpdb->prefix . 'console_errors_ignore_patterns'
+        );
+        
+        foreach ($tables_to_drop as $table_name) {
+            if ($this->table_exists($table_name)) {
+                $drop_sql = "DROP TABLE IF EXISTS {$table_name}";
+                $result = $this->wpdb->query($drop_sql);
+                
+                if ($this->should_log_debug()) {
+                    error_log("CEL: FORCE RECREATION: Dropped table {$table_name} - " . ($result !== false ? 'SUCCESS' : 'FAILED'));
+                    if ($result === false && $this->wpdb->last_error) {
+                        error_log("CEL: FORCE RECREATION: Drop error: " . $this->wpdb->last_error);
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Repair tables (attempt to fix corrupted tables)
+     */
+    public function repair_tables() {
+        $repair_results = array();
+        $tables_to_repair = array(
+            'main' => $this->table_name,
+            'mapping' => $this->wpdb->prefix . 'console_errors_ip_mapping',
+            'ignore' => $this->wpdb->prefix . 'console_errors_ignore_patterns'
+        );
+        
+        foreach ($tables_to_repair as $table_key => $table_name) {
+            if ($this->table_exists($table_name)) {
+                // Try REPAIR TABLE
+                $repair_sql = "REPAIR TABLE {$table_name}";
+                $repair_result = $this->wpdb->query($repair_sql);
+                
+                // Try CHECK TABLE to verify integrity
+                $check_sql = "CHECK TABLE {$table_name}";
+                $check_result = $this->wpdb->get_results($check_sql);
+                
+                $repair_results[$table_key] = array(
+                    'table_name' => $table_name,
+                    'repair_result' => $repair_result,
+                    'check_result' => $check_result,
+                    'repair_success' => ($repair_result !== false),
+                    'integrity_ok' => !empty($check_result) && 
+                        (isset($check_result[0]->Msg_text) && 
+                         strpos(strtolower($check_result[0]->Msg_text), 'ok') !== false)
+                );
+                
+                if ($this->should_log_debug()) {
+                    error_log("CEL: REPAIR: Table {$table_name} repair result: " . ($repair_result !== false ? 'SUCCESS' : 'FAILED'));
+                    if (!empty($check_result)) {
+                        error_log("CEL: REPAIR: Table {$table_name} integrity: " . print_r($check_result, true));
+                    }
+                }
+            } else {
+                $repair_results[$table_key] = array(
+                    'table_name' => $table_name,
+                    'repair_result' => false,
+                    'check_result' => array(),
+                    'repair_success' => false,
+                    'integrity_ok' => false,
+                    'error' => 'Table does not exist'
+                );
+            }
+        }
+        
+        return $repair_results;
+    }
+    
+    /**
+     * Get creation failure details for admin display
+     */
+    public function get_creation_failure_details() {
+        return get_option('cel_table_creation_failures', null);
+    }
+    
+    /**
+     * Clear creation failure details
+     */
+    public function clear_creation_failure_details() {
+        return delete_option('cel_table_creation_failures');
+    }
+    
+    /**
+     * Test database connectivity and permissions
+     */
+    public function test_database_connectivity() {
+        $tests = array();
+        
+        // Test 1: Basic connectivity
+        $tests['connectivity'] = array(
+            'name' => 'Database Connectivity',
+            'success' => false,
+            'message' => ''
+        );
+        
+        try {
+            $result = $this->wpdb->get_var("SELECT 1");
+            if ($result === '1') {
+                $tests['connectivity']['success'] = true;
+                $tests['connectivity']['message'] = 'Database connection successful';
+            } else {
+                $tests['connectivity']['message'] = 'Database connection failed - no response';
+            }
+        } catch (Exception $e) {
+            $tests['connectivity']['message'] = 'Database connection exception: ' . $e->getMessage();
+        }
+        
+        // Test 2: CREATE privilege
+        $tests['create_privilege'] = array(
+            'name' => 'CREATE Table Privilege',
+            'success' => false,
+            'message' => ''
+        );
+        
+        $test_table = $this->wpdb->prefix . 'cel_test_' . time();
+        $create_sql = "CREATE TABLE {$test_table} (id INT NOT NULL AUTO_INCREMENT, PRIMARY KEY (id))";
+        
+        $create_result = $this->wpdb->query($create_sql);
+        if ($create_result !== false) {
+            $tests['create_privilege']['success'] = true;
+            $tests['create_privilege']['message'] = 'CREATE privilege confirmed';
+            
+            // Clean up test table
+            $this->wpdb->query("DROP TABLE IF EXISTS {$test_table}");
+        } else {
+            $tests['create_privilege']['message'] = 'CREATE privilege denied: ' . ($this->wpdb->last_error ?: 'Unknown error');
+        }
+        
+        // Test 3: WordPress tables access
+        $tests['wp_tables_access'] = array(
+            'name' => 'WordPress Tables Access',
+            'success' => false,
+            'message' => ''
+        );
+        
+        try {
+            $options_count = $this->wpdb->get_var("SELECT COUNT(*) FROM {$this->wpdb->options} LIMIT 1");
+            if ($options_count !== null) {
+                $tests['wp_tables_access']['success'] = true;
+                $tests['wp_tables_access']['message'] = 'WordPress tables accessible';
+            } else {
+                $tests['wp_tables_access']['message'] = 'Cannot access WordPress options table';
+            }
+        } catch (Exception $e) {
+            $tests['wp_tables_access']['message'] = 'WordPress tables access exception: ' . $e->getMessage();
+        }
+        
+        // Test 4: Character set support
+        $tests['charset_support'] = array(
+            'name' => 'Character Set Support',
+            'success' => false,
+            'message' => ''
+        );
+        
+        try {
+            $charset_result = $this->wpdb->get_var("SHOW VARIABLES LIKE 'character_set_database'");
+            if ($charset_result) {
+                $tests['charset_support']['success'] = true;
+                $tests['charset_support']['message'] = 'Character set support confirmed';
+            } else {
+                $tests['charset_support']['message'] = 'Cannot determine character set support';
+            }
+        } catch (Exception $e) {
+            $tests['charset_support']['message'] = 'Character set test exception: ' . $e->getMessage();
+        }
+        
+        return $tests;
+    }
+    
+    /**
      * Get performance cache status
      */
     public function get_cache_status() {
@@ -1185,5 +1813,51 @@ class CEL_Database {
         $status['login_stats_cache_count'] = (int)$login_cache_count;
         
         return $status;
+    }
+    
+    /**
+     * Debug helper - output comprehensive system information
+     */
+    public function debug_system_info() {
+        global $wp_version;
+        
+        $info = array(
+            'wordpress_version' => $wp_version,
+            'php_version' => PHP_VERSION,
+            'mysql_version' => $this->wpdb->db_version(),
+            'table_prefix' => $this->wpdb->prefix,
+            'database_name' => DB_NAME,
+            'database_host' => DB_HOST,
+            'database_charset' => DB_CHARSET,
+            'database_collate' => DB_COLLATE,
+            'wp_debug_enabled' => defined('WP_DEBUG') && WP_DEBUG,
+            'wp_debug_log_enabled' => defined('WP_DEBUG_LOG') && WP_DEBUG_LOG,
+            'memory_limit' => ini_get('memory_limit'),
+            'max_execution_time' => ini_get('max_execution_time'),
+            'user_permissions' => array(
+                'activate_plugins' => current_user_can('activate_plugins'),
+                'manage_options' => current_user_can('manage_options'),
+                'is_admin' => is_admin()
+            )
+        );
+        
+        // Test basic database operations
+        $db_tests = $this->test_database_connectivity();
+        $info['database_tests'] = $db_tests;
+        
+        // Get table status
+        $info['table_status'] = $this->get_table_status();
+        
+        // Get any stored failure details
+        $info['creation_failures'] = get_option('cel_table_creation_failures');
+        
+        return $info;
+    }
+    
+    /**
+     * Get database connection for other classes
+     */
+    public function get_wpdb() {
+        return $this->wpdb;
     }
 }
