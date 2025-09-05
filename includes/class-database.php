@@ -300,6 +300,33 @@ class CEL_Database {
     }
     
     /**
+     * Track user login
+     */
+    public function track_login($user) {
+        if (!$user instanceof WP_User) {
+            return false;
+        }
+        
+        // Log the login event as a special error type
+        $this->insert_error(array(
+            'error_type' => 'login_success',
+            'error_message' => sprintf('User login: %s (ID: %d)', $user->user_login, $user->ID),
+            'page_url' => wp_login_url(),
+            'user_id' => $user->ID,
+            'is_login_page' => 1,
+            'additional_data' => array(
+                'event' => 'wp_login',
+                'username' => $user->user_login,
+                'user_email' => $user->user_email,
+                'user_role' => implode(', ', $user->roles),
+                'timestamp' => current_time('mysql')
+            )
+        ));
+        
+        return true;
+    }
+    
+    /**
      * Track user-IP association
      */
     public function track_user_ip($user_id, $ip_address) {
