@@ -81,8 +81,25 @@ class CEL_Database {
         dbDelta($sql);
         dbDelta($mapping_sql);
         
+        // Create ignore patterns table
+        $ignore_table = $this->wpdb->prefix . 'console_errors_ignore_patterns';
+        $ignore_sql = "CREATE TABLE {$ignore_table} (
+            id MEDIUMINT(9) NOT NULL AUTO_INCREMENT,
+            pattern_type VARCHAR(50) NOT NULL,
+            pattern_value TEXT NOT NULL,
+            is_active TINYINT(1) DEFAULT 1,
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY pattern_type (pattern_type),
+            KEY is_active (is_active)
+        ) $charset_collate;";
+        
+        dbDelta($ignore_sql);
+        
         // Update database version
-        update_option('cel_db_version', '1.1.0');
+        update_option('cel_db_version', '1.2.0');
     }
     
     /**
@@ -654,6 +671,128 @@ class CEL_Database {
         );
         
         return $count > 10;
+    }
+    
+    /**
+     * Get ignore patterns
+     */
+    public function get_ignore_patterns($active_only = false) {
+        $ignore_table = $this->wpdb->prefix . 'console_errors_ignore_patterns';
+        
+        if ($active_only) {
+            return $this->wpdb->get_results(
+                "SELECT * FROM {$ignore_table} WHERE is_active = 1 ORDER BY pattern_type, id DESC"
+            );
+        }
+        
+        return $this->wpdb->get_results(
+            "SELECT * FROM {$ignore_table} ORDER BY pattern_type, id DESC"
+        );
+    }
+    
+    /**
+     * Add ignore pattern
+     */
+    public function add_ignore_pattern($pattern_type, $pattern_value, $notes = '') {
+        $ignore_table = $this->wpdb->prefix . 'console_errors_ignore_patterns';
+        
+        return $this->wpdb->insert(
+            $ignore_table,
+            array(
+                'pattern_type' => sanitize_text_field($pattern_type),
+                'pattern_value' => sanitize_textarea_field($pattern_value),
+                'notes' => sanitize_textarea_field($notes),
+                'is_active' => 1,
+                'created_at' => current_time('mysql'),
+                'updated_at' => current_time('mysql')
+            ),
+            array('%s', '%s', '%s', '%d', '%s', '%s')
+        );
+    }
+    
+    /**
+     * Toggle ignore pattern status
+     */
+    public function toggle_ignore_pattern($pattern_id) {
+        $ignore_table = $this->wpdb->prefix . 'console_errors_ignore_patterns';
+        
+        // Get current status
+        $current = $this->wpdb->get_var($this->wpdb->prepare(
+            "SELECT is_active FROM {$ignore_table} WHERE id = %d",
+            $pattern_id
+        ));
+        
+        if ($current === null) {
+            return false;
+        }
+        
+        // Toggle the status
+        return $this->wpdb->update(
+            $ignore_table,
+            array(
+                'is_active' => !$current,
+                'updated_at' => current_time('mysql')
+            ),
+            array('id' => $pattern_id),
+            array('%d', '%s'),
+            array('%d')
+        );
+    }
+    
+    /**
+     * Delete ignore pattern
+     */
+    public function delete_ignore_pattern($pattern_id) {
+        $ignore_table = $this->wpdb->prefix . 'console_errors_ignore_patterns';
+        
+        return $this->wpdb->delete(
+            $ignore_table,
+            array('id' => $pattern_id),
+            array('%d')
+        );
+    }
+    
+    /**
+     * Check if error should be ignored
+     */
+    public function should_ignore_error($error_data) {
+        $patterns = $this->get_ignore_patterns(true); // Get only active patterns
+        
+        foreach ($patterns as $pattern) {
+            $pattern_value = $pattern->pattern_value;
+            
+            switch ($pattern->pattern_type) {
+                case 'message':
+                    if (isset($error_data['error_message']) && 
+                        strpos($error_data['error_message'], $pattern_value) !== false) {
+                        return true;
+                    }
+                    break;
+                    
+                case 'source':
+                    if (isset($error_data['error_source']) && 
+                        strpos($error_data['error_source'], $pattern_value) !== false) {
+                        return true;
+                    }
+                    break;
+                    
+                case 'type':
+                    if (isset($error_data['error_type']) && 
+                        $error_data['error_type'] === $pattern_value) {
+                        return true;
+                    }
+                    break;
+                    
+                case 'regex':
+                    if (isset($error_data['error_message']) && 
+                        @preg_match($pattern_value, $error_data['error_message'])) {
+                        return true;
+                    }
+                    break;
+            }
+        }
+        
+        return false;
     }
     
     /**

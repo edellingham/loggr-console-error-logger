@@ -3,7 +3,7 @@
  * Plugin Name: Loggr
  * Plugin URI: https://cloudnineweb.co
  * Description: Captures and logs browser console errors, JavaScript errors, and AJAX failures to help diagnose client-side issues, especially login problems.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: Cloud Nine Web
  * Author URI: https://cloudnineweb.co
  * License: GPL v2 or later
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('CEL_VERSION', '1.1.0');
+define('CEL_VERSION', '1.2.0');
 define('CEL_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('CEL_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('CEL_PLUGIN_BASENAME', plugin_basename(__FILE__));
