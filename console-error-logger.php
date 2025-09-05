@@ -108,6 +108,7 @@ class Console_Error_Logger {
         
         // User tracking hooks
         add_action('wp_login', array($this, 'track_user_login'), 10, 2);
+        add_action('wp_login_failed', array($this, 'track_failed_login'), 10, 1);
         
         // Admin hooks
         if (is_admin()) {
@@ -231,6 +232,30 @@ class Console_Error_Logger {
         
         // Update any recent errors from this IP to associate with this user
         $this->associate_recent_errors_with_user($user->ID, $user_ip);
+    }
+    
+    /**
+     * Track failed login attempts
+     */
+    public function track_failed_login($username) {
+        $user_ip = $this->get_client_ip();
+        
+        // Try to get user ID if the username exists
+        $user_id = null;
+        $user_exists = false;
+        if (!empty($username)) {
+            $user = get_user_by('login', $username);
+            if (!$user) {
+                $user = get_user_by('email', $username);
+            }
+            if ($user) {
+                $user_id = $user->ID;
+                $user_exists = true;
+            }
+        }
+        
+        // Log the failed login attempt
+        $this->database->track_failed_login($username, $user_ip, $user_id, $user_exists);
     }
     
     /**

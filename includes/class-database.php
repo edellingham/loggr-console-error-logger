@@ -327,6 +327,47 @@ class CEL_Database {
     }
     
     /**
+     * Track failed login attempts
+     */
+    public function track_failed_login($username, $ip_address, $user_id = null, $user_exists = false) {
+        // Prepare the error message
+        if ($user_exists) {
+            $error_message = sprintf('Failed login attempt for existing user: %s', $username);
+            $error_type = 'login_failed_valid_user';
+        } elseif (!empty($username)) {
+            $error_message = sprintf('Failed login attempt for non-existent user: %s', $username);
+            $error_type = 'login_failed_invalid_user';
+        } else {
+            $error_message = 'Failed login attempt with empty username';
+            $error_type = 'login_failed_empty';
+        }
+        
+        // Log the failed login event
+        $this->insert_error(array(
+            'error_type' => $error_type,
+            'error_message' => $error_message,
+            'page_url' => wp_login_url(),
+            'user_id' => $user_id,
+            'user_ip' => $ip_address,
+            'is_login_page' => 1,
+            'additional_data' => array(
+                'event' => 'wp_login_failed',
+                'attempted_username' => $username,
+                'user_exists' => $user_exists,
+                'timestamp' => current_time('mysql'),
+                'authentication_failure' => true
+            )
+        ));
+        
+        // Track IP if we have a valid user
+        if ($user_id && $ip_address) {
+            $this->track_user_ip($user_id, $ip_address);
+        }
+        
+        return true;
+    }
+    
+    /**
      * Track user-IP association
      */
     public function track_user_ip($user_id, $ip_address) {
