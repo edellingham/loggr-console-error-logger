@@ -66,6 +66,27 @@
     background-color: #46b450;
 }
 
+/* Login Event Types */
+.cel-error-type-login_success {
+    background-color: #46b450;  /* Green for successful login */
+    color: #fff;
+}
+
+.cel-error-type-login_failed_valid_user {
+    background-color: #dc3232;  /* Red for failed login with valid user */
+    color: #fff;
+}
+
+.cel-error-type-login_failed_invalid_user {
+    background-color: #ff8800;  /* Orange for non-existent user attempts */
+    color: #fff;
+}
+
+.cel-error-type-login_failed_empty {
+    background-color: #826eb4;  /* Purple for empty username attempts */
+    color: #fff;
+}
+
 /* Login Badge */
 .cel-badge {
     display: inline-block;
