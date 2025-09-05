@@ -314,7 +314,7 @@ class CEL_Admin {
                                 <td class="column-message">
                                     <div class="cel-error-message">
                                         <?php 
-                                        $message = wp_kses_post($error->error_message);
+                                        $message = esc_html($error->error_message);
                                         echo strlen($message) > 200 ? 
                                              substr($message, 0, 200) . '...' : 
                                              $message;
@@ -420,6 +420,12 @@ class CEL_Admin {
      * Render statistics tab
      */
     private function render_stats_tab() {
+        // Check user capabilities
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have sufficient permissions to access this page.'));
+            return;
+        }
+        
         $stats = $this->database->get_error_stats();
         
         ?>
@@ -490,6 +496,12 @@ class CEL_Admin {
      * Render ignore patterns tab
      */
     private function render_ignore_tab() {
+        // Check user capabilities
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have sufficient permissions to access this page.'));
+            return;
+        }
+        
         $patterns = $this->database->get_ignore_patterns();
         
         ?>
@@ -576,6 +588,12 @@ class CEL_Admin {
      * Render login analytics tab
      */
     private function render_logins_tab() {
+        // Check user capabilities
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have sufficient permissions to access this page.'));
+            return;
+        }
+        
         // Get pagination parameters
         $per_page = 50;
         $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
@@ -712,6 +730,12 @@ class CEL_Admin {
      * Render settings tab
      */
     private function render_settings_tab() {
+        // Check user capabilities first
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have sufficient permissions to access this page.'));
+            return;
+        }
+        
         // Handle form submission
         if (isset($_POST['cel_save_settings']) && isset($_POST['cel_settings_nonce']) && wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['cel_settings_nonce'])), 'cel_save_settings')) {
             $this->save_settings();
@@ -889,7 +913,7 @@ class CEL_Admin {
                             </span>
                             <div class="cel-error-preview">
                                 <?php 
-                                $message = wp_kses_post($error->error_message);
+                                $message = esc_html($error->error_message);
                                 echo strlen($message) > 100 ? substr($message, 0, 100) . '...' : $message;
                                 ?>
                             </div>
@@ -969,6 +993,12 @@ class CEL_Admin {
      * Render diagnostics tab
      */
     private function render_diagnostics_tab() {
+        // Check user capabilities
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have sufficient permissions to access this page.'));
+            return;
+        }
+        
         // Get diagnostics instance
         $diagnostics = new CEL_Diagnostics();
         $diagnostics->render_diagnostics_content();

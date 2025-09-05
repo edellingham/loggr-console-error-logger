@@ -93,6 +93,9 @@ class Console_Error_Logger {
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
         
+        // Uninstall hook - points to uninstall.php file
+        // This will be called when the plugin is deleted via WordPress admin
+        
         // Initialize plugin
         add_action('init', array($this, 'init'));
         
@@ -210,7 +213,7 @@ class Console_Error_Logger {
         $settings = get_option('cel_settings', array());
         wp_localize_script('cel-error-logger', 'cel_ajax', array(
             'ajax_url' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('cel_log_error_nonce'),
+            'nonce' => wp_create_nonce('cel_admin_nonce'),
             'is_login_page' => $is_login_page,
             'login_timeout' => isset($settings['login_timeout_seconds']) ? absint($settings['login_timeout_seconds']) : 10,
             'page_url' => isset($_SERVER['REQUEST_URI']) ? esc_url_raw(wp_unslash($_SERVER['REQUEST_URI'])) : '',
@@ -311,11 +314,44 @@ class Console_Error_Logger {
     }
     
     /**
+     * Validate regex pattern to prevent ReDoS attacks
+     */
+    private function validate_regex_pattern($pattern) {
+        // Check for basic validity
+        if (@preg_match($pattern, '') === false) {
+            return false;
+        }
+        
+        // Check for dangerous patterns that could cause ReDoS
+        $dangerous_patterns = array(
+            '/\(\?:\*/',           // (?:*)+ patterns
+            '/\*\+/',              // *+ quantifiers
+            '/\+\*/',              // +* quantifiers
+            '/\{\d+,\}\+/',        // {n,}+ patterns
+            '/\(\?![^)]*\)\*/',    // Negative lookahead with *
+            '/\([^)]*\)\{[^}]*,\}\*/', // Nested quantifiers
+        );
+        
+        foreach ($dangerous_patterns as $dangerous) {
+            if (preg_match($dangerous, $pattern)) {
+                return false;
+            }
+        }
+        
+        // Limit complexity - no more than 10 quantifiers
+        if (preg_match_all('/[*+?{]/', $pattern) > 10) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    /**
      * Handle AJAX request to add ignore pattern
      */
     public function handle_add_ignore_pattern() {
         // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'cel_admin_nonce')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'cel_admin_nonce')) {
             wp_send_json_error(array('message' => 'Invalid security token'));
             return;
         }
@@ -326,9 +362,23 @@ class Console_Error_Logger {
             return;
         }
         
-        $pattern_type = sanitize_text_field($_POST['pattern_type']);
-        $pattern_value = sanitize_textarea_field($_POST['pattern_value']);
-        $notes = sanitize_textarea_field($_POST['notes'] ?? '');
+        // Validate input size
+        if (strlen(wp_unslash($_POST['pattern_value'] ?? '')) > 5000) {
+            wp_send_json_error(array('message' => 'Pattern value too large'));
+            return;
+        }
+        
+        $pattern_type = sanitize_text_field(wp_unslash($_POST['pattern_type'] ?? ''));
+        $pattern_value = sanitize_textarea_field(wp_unslash($_POST['pattern_value'] ?? ''));
+        $notes = sanitize_textarea_field(wp_unslash($_POST['notes'] ?? ''));
+        
+        // Validate regex patterns to prevent ReDoS attacks
+        if ($pattern_type === 'regex') {
+            if (!$this->validate_regex_pattern($pattern_value)) {
+                wp_send_json_error(array('message' => 'Invalid or potentially dangerous regex pattern'));
+                return;
+            }
+        }
         
         $result = $this->database->add_ignore_pattern($pattern_type, $pattern_value, $notes);
         
@@ -344,7 +394,7 @@ class Console_Error_Logger {
      */
     public function handle_toggle_ignore_pattern() {
         // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'cel_admin_nonce')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'cel_admin_nonce')) {
             wp_send_json_error(array('message' => 'Invalid security token'));
             return;
         }
@@ -355,7 +405,7 @@ class Console_Error_Logger {
             return;
         }
         
-        $pattern_id = absint($_POST['pattern_id']);
+        $pattern_id = absint(wp_unslash($_POST['pattern_id'] ?? 0));
         
         $result = $this->database->toggle_ignore_pattern($pattern_id);
         

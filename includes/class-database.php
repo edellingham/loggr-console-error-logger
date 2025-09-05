@@ -58,7 +58,13 @@ class CEL_Database {
             KEY user_ip (user_ip),
             KEY user_id (user_id),
             KEY associated_user_id (associated_user_id),
-            KEY is_login_page (is_login_page)
+            KEY is_login_page (is_login_page),
+            KEY idx_rate_limiting (user_ip, timestamp),
+            KEY idx_type_timestamp (error_type, timestamp),
+            KEY idx_login_timestamp (is_login_page, timestamp),
+            KEY idx_user_timestamp (user_id, timestamp),
+            KEY idx_stats_composite (error_type, is_login_page, timestamp),
+            KEY idx_analytics (timestamp, error_type, user_ip)
         ) $charset_collate;";
         
         // Create IP-to-user mapping table
@@ -98,8 +104,8 @@ class CEL_Database {
         
         dbDelta($ignore_sql);
         
-        // Update database version
-        update_option('cel_db_version', '1.2.0');
+        // Update database version to trigger index creation on upgrade
+        update_option('cel_db_version', '1.3.0');
     }
     
     /**
@@ -115,11 +121,11 @@ class CEL_Database {
         $insert_data = array(
             'timestamp' => current_time('mysql'),
             'error_type' => sanitize_text_field($data['error_type']),
-            'error_message' => wp_kses_post($data['error_message']),
+            'error_message' => sanitize_textarea_field($data['error_message']),
             'error_source' => isset($data['error_source']) ? esc_url_raw($data['error_source']) : null,
             'error_line' => isset($data['error_line']) ? absint($data['error_line']) : null,
             'error_column' => isset($data['error_column']) ? absint($data['error_column']) : null,
-            'stack_trace' => isset($data['stack_trace']) ? wp_kses_post($data['stack_trace']) : null,
+            'stack_trace' => isset($data['stack_trace']) ? sanitize_textarea_field($data['stack_trace']) : null,
             'user_agent' => isset($data['user_agent']) ? sanitize_text_field($data['user_agent']) : null,
             'page_url' => isset($data['page_url']) ? esc_url_raw($data['page_url']) : null,
             'user_ip' => $this->get_client_ip(),
@@ -180,6 +186,10 @@ class CEL_Database {
         
         $args = wp_parse_args($args, $defaults);
         
+        // Enforce memory safety limits
+        $max_limit = 1000; // Maximum 1000 records per query
+        $args['limit'] = min((int)$args['limit'], $max_limit);
+        
         // Build WHERE clause
         $where = array('1=1');
         $prepare_values = array();
@@ -221,7 +231,7 @@ class CEL_Database {
         $order = strtoupper($args['order']) === 'ASC' ? 'ASC' : 'DESC';
         
         // Build query
-        $query = "SELECT * FROM {$this->table_name} WHERE {$where_clause} ORDER BY {$orderby} {$order} LIMIT %d OFFSET %d";
+        $query = "SELECT * FROM `{$this->table_name}` WHERE {$where_clause} ORDER BY {$orderby} {$order} LIMIT %d OFFSET %d";
         $prepare_values[] = $args['limit'];
         $prepare_values[] = $args['offset'];
         
@@ -255,7 +265,7 @@ class CEL_Database {
         }
         
         $where_clause = implode(' AND ', $where);
-        $query = "SELECT COUNT(*) FROM {$this->table_name} WHERE {$where_clause}";
+        $query = "SELECT COUNT(*) FROM `{$this->table_name}` WHERE {$where_clause}";
         
         if (!empty($prepare_values)) {
             return $this->wpdb->get_var(
@@ -270,20 +280,30 @@ class CEL_Database {
      * Get error statistics
      */
     public function get_error_stats() {
+        // Check cache first
+        $cache_key = 'cel_error_stats';
+        $cached_stats = get_transient($cache_key);
+        
+        if ($cached_stats !== false) {
+            return $cached_stats;
+        }
+        
         $stats = array();
         
-        // Total errors
+        // Use optimized queries with proper indexes
+        // Total errors (with limit to prevent memory issues)
         $stats['total'] = $this->wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}");
         
-        // Errors by type
+        // Errors by type (limit to top 20 types to prevent memory issues)
         $stats['by_type'] = $this->wpdb->get_results(
             "SELECT error_type, COUNT(*) as count 
              FROM {$this->table_name} 
              GROUP BY error_type 
-             ORDER BY count DESC"
+             ORDER BY count DESC
+             LIMIT 20"
         );
         
-        // Recent errors (last 24 hours)
+        // Recent errors (last 24 hours) - uses idx_analytics index
         $stats['recent_24h'] = $this->wpdb->get_var(
             $this->wpdb->prepare(
                 "SELECT COUNT(*) FROM {$this->table_name} 
@@ -292,10 +312,13 @@ class CEL_Database {
             )
         );
         
-        // Login page errors
+        // Login page errors - uses idx_login_timestamp index
         $stats['login_errors'] = $this->wpdb->get_var(
             "SELECT COUNT(*) FROM {$this->table_name} WHERE is_login_page = 1"
         );
+        
+        // Cache for 5 minutes
+        set_transient($cache_key, $stats, 5 * MINUTE_IN_SECONDS);
         
         return $stats;
     }
@@ -305,7 +328,7 @@ class CEL_Database {
      */
     public function get_last_error_time() {
         return $this->wpdb->get_var(
-            "SELECT timestamp FROM {$this->table_name} ORDER BY timestamp DESC LIMIT 1"
+            "SELECT timestamp FROM `{$this->table_name}` ORDER BY timestamp DESC LIMIT 1"
         );
     }
     
@@ -518,6 +541,10 @@ class CEL_Database {
         
         $args = wp_parse_args($args, $defaults);
         
+        // Enforce memory safety limits
+        $max_limit = 1000; // Maximum 1000 records per query
+        $args['limit'] = min((int)$args['limit'], $max_limit);
+        
         // Build WHERE clause
         $where = array('1=1');
         $prepare_values = array();
@@ -572,9 +599,9 @@ class CEL_Database {
         $query = "SELECT e.*, 
                          u1.display_name as logged_user_name, u1.user_login as logged_user_login,
                          u2.display_name as associated_user_name, u2.user_login as associated_user_login
-                  FROM {$this->table_name} e
-                  LEFT JOIN {$this->wpdb->users} u1 ON e.user_id = u1.ID
-                  LEFT JOIN {$this->wpdb->users} u2 ON e.associated_user_id = u2.ID
+                  FROM `{$this->table_name}` e
+                  LEFT JOIN `{$this->wpdb->users}` u1 ON e.user_id = u1.ID
+                  LEFT JOIN `{$this->wpdb->users}` u2 ON e.associated_user_id = u2.ID
                   WHERE {$where_clause} 
                   ORDER BY e.{$orderby} {$order} 
                   LIMIT %d OFFSET %d";
@@ -596,7 +623,7 @@ class CEL_Database {
      * Clear all error logs
      */
     public function clear_all_logs() {
-        return $this->wpdb->query("TRUNCATE TABLE {$this->table_name}");
+        return $this->wpdb->query("TRUNCATE TABLE `{$this->table_name}`");
     }
     
     /**
@@ -622,7 +649,7 @@ class CEL_Database {
             
             return $this->wpdb->query(
                 $this->wpdb->prepare(
-                    "DELETE FROM {$this->table_name} WHERE timestamp < %s",
+                    "DELETE FROM `{$this->table_name}` WHERE timestamp < %s",
                     $cutoff_date
                 )
             );
@@ -638,7 +665,7 @@ class CEL_Database {
         $settings = get_option('cel_settings', array());
         $max_entries = isset($settings['max_log_entries']) ? (int)$settings['max_log_entries'] : 1000;
         
-        $count = $this->wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}");
+        $count = $this->wpdb->get_var("SELECT COUNT(*) FROM `{$this->table_name}`");
         
         if ($count > $max_entries) {
             // Delete oldest entries to maintain max limit
@@ -646,7 +673,7 @@ class CEL_Database {
             
             $this->wpdb->query(
                 $this->wpdb->prepare(
-                    "DELETE FROM {$this->table_name} 
+                    "DELETE FROM `{$this->table_name}` 
                      ORDER BY timestamp ASC 
                      LIMIT %d",
                     $to_delete
@@ -660,17 +687,24 @@ class CEL_Database {
      */
     private function is_rate_limited($ip) {
         // Check if IP has logged too many errors recently (more than 10 in last minute)
-        $count = $this->wpdb->get_var(
+        // Use optimized query with LIMIT to stop counting after threshold is reached
+        $threshold = 10;
+        $result = $this->wpdb->get_var(
             $this->wpdb->prepare(
-                "SELECT COUNT(*) FROM {$this->table_name} 
-                 WHERE user_ip = %s 
-                 AND timestamp > %s",
+                "SELECT COUNT(*) FROM (
+                    SELECT 1 FROM `{$this->table_name}` 
+                    WHERE user_ip = %s 
+                    AND timestamp > %s 
+                    ORDER BY timestamp DESC 
+                    LIMIT %d
+                ) AS recent_errors",
                 $ip,
-                date('Y-m-d H:i:s', strtotime('-1 minute'))
+                date('Y-m-d H:i:s', strtotime('-1 minute')),
+                $threshold + 1
             )
         );
         
-        return $count > 10;
+        return $result > $threshold;
     }
     
     /**
@@ -784,9 +818,13 @@ class CEL_Database {
                     break;
                     
                 case 'regex':
-                    if (isset($error_data['error_message']) && 
-                        @preg_match($pattern_value, $error_data['error_message'])) {
-                        return true;
+                    if (isset($error_data['error_message'])) {
+                        // Validate regex pattern before using it
+                        if ($this->is_safe_regex($pattern_value)) {
+                            if (@preg_match($pattern_value, $error_data['error_message'])) {
+                                return true;
+                            }
+                        }
                     }
                     break;
             }
@@ -811,6 +849,10 @@ class CEL_Database {
         );
         
         $args = wp_parse_args($args, $defaults);
+        
+        // Enforce memory safety limits
+        $max_limit = 500; // Maximum 500 records per query for login history
+        $args['limit'] = min((int)$args['limit'], $max_limit);
         
         // Build WHERE clause for login events
         $where = array("error_type IN ('login_success', 'login_failed_valid_user', 'login_failed_invalid_user', 'login_failed_empty')");
@@ -847,8 +889,8 @@ class CEL_Database {
         // Build query with user information
         $query = "SELECT e.*, 
                          u.display_name, u.user_login, u.user_email
-                  FROM {$this->table_name} e
-                  LEFT JOIN {$this->wpdb->users} u ON e.user_id = u.ID
+                  FROM `{$this->table_name}` e
+                  LEFT JOIN `{$this->wpdb->users}` u ON e.user_id = u.ID
                   WHERE {$where_clause}
                   ORDER BY e.timestamp DESC
                   LIMIT %d OFFSET %d";
@@ -865,6 +907,14 @@ class CEL_Database {
      * Get login statistics for analytics
      */
     public function get_login_stats($date_from = '', $date_to = '') {
+        // Create cache key based on date parameters
+        $cache_key = 'cel_login_stats_' . md5($date_from . '_' . $date_to);
+        $cached_stats = get_transient($cache_key);
+        
+        if ($cached_stats !== false) {
+            return $cached_stats;
+        }
+        
         $where_date = '';
         $prepare_values = array();
         
@@ -880,33 +930,35 @@ class CEL_Database {
         
         $stats = array();
         
-        // Total successful logins
-        $query = "SELECT COUNT(*) FROM {$this->table_name} WHERE error_type = 'login_success'{$where_date}";
+        // Use single optimized query to get all login counts at once
+        $login_types_query = "SELECT 
+                                error_type,
+                                COUNT(*) as count
+                              FROM {$this->table_name} 
+                              WHERE error_type IN ('login_success', 'login_failed_valid_user', 'login_failed_invalid_user', 'login_failed_empty'){$where_date}
+                              GROUP BY error_type";
+        
         if (!empty($prepare_values)) {
-            $stats['successful_logins'] = $this->wpdb->get_var($this->wpdb->prepare($query, $prepare_values));
+            $login_counts = $this->wpdb->get_results($this->wpdb->prepare($login_types_query, $prepare_values), ARRAY_A);
         } else {
-            $stats['successful_logins'] = $this->wpdb->get_var($query);
+            $login_counts = $this->wpdb->get_results($login_types_query, ARRAY_A);
         }
         
-        // Total failed logins
-        $query = "SELECT COUNT(*) FROM {$this->table_name} WHERE error_type IN ('login_failed_valid_user', 'login_failed_invalid_user', 'login_failed_empty'){$where_date}";
-        if (!empty($prepare_values)) {
-            $stats['failed_logins'] = $this->wpdb->get_var($this->wpdb->prepare($query, $prepare_values));
-        } else {
-            $stats['failed_logins'] = $this->wpdb->get_var($query);
+        // Process results
+        $stats['successful_logins'] = 0;
+        $stats['failed_logins'] = 0;
+        $stats['failed_by_type'] = array();
+        
+        foreach ($login_counts as $count_data) {
+            if ($count_data['error_type'] === 'login_success') {
+                $stats['successful_logins'] = (int)$count_data['count'];
+            } else {
+                $stats['failed_logins'] += (int)$count_data['count'];
+                $stats['failed_by_type'][] = (object)$count_data;
+            }
         }
         
-        // Failed logins by type
-        $query = "SELECT error_type, COUNT(*) as count FROM {$this->table_name} 
-                  WHERE error_type IN ('login_failed_valid_user', 'login_failed_invalid_user', 'login_failed_empty'){$where_date}
-                  GROUP BY error_type";
-        if (!empty($prepare_values)) {
-            $stats['failed_by_type'] = $this->wpdb->get_results($this->wpdb->prepare($query, $prepare_values));
-        } else {
-            $stats['failed_by_type'] = $this->wpdb->get_results($query);
-        }
-        
-        // Top IP addresses with failed attempts
+        // Top IP addresses with failed attempts (limit to prevent memory issues)
         $query = "SELECT user_ip, COUNT(*) as attempts FROM {$this->table_name} 
                   WHERE error_type IN ('login_failed_valid_user', 'login_failed_invalid_user', 'login_failed_empty'){$where_date}
                   GROUP BY user_ip ORDER BY attempts DESC LIMIT 10";
@@ -916,7 +968,7 @@ class CEL_Database {
             $stats['top_failed_ips'] = $this->wpdb->get_results($query);
         }
         
-        // Most targeted users (valid usernames with failed attempts)
+        // Most targeted users (valid usernames with failed attempts) - limit to prevent memory issues
         $query = "SELECT e.user_id, u.user_login, COUNT(*) as attempts 
                   FROM {$this->table_name} e
                   LEFT JOIN {$this->wpdb->users} u ON e.user_id = u.ID
@@ -927,6 +979,9 @@ class CEL_Database {
         } else {
             $stats['most_targeted_users'] = $this->wpdb->get_results($query);
         }
+        
+        // Cache for 10 minutes (longer for expensive login stats)
+        set_transient($cache_key, $stats, 10 * MINUTE_IN_SECONDS);
         
         return $stats;
     }
@@ -957,5 +1012,76 @@ class CEL_Database {
         
         // Return localhost if no valid IP found
         return '127.0.0.1';
+    }
+    
+    /**
+     * Validate regex pattern to prevent ReDoS attacks
+     */
+    private function is_safe_regex($pattern) {
+        // Check for basic validity
+        if (@preg_match($pattern, '') === false) {
+            return false;
+        }
+        
+        // Check for dangerous patterns that could cause ReDoS
+        $dangerous_patterns = array(
+            '/\(\?:\*/',           // (?:*)+ patterns
+            '/\*\+/',              // *+ quantifiers
+            '/\+\*/',              // +* quantifiers
+            '/\{\d+,\}\+/',        // {n,}+ patterns
+            '/\(\?![^)]*\)\*/',    // Negative lookahead with *
+            '/\([^)]*\)\{[^}]*,\}\*/', // Nested quantifiers
+        );
+        
+        foreach ($dangerous_patterns as $dangerous) {
+            if (preg_match($dangerous, $pattern)) {
+                return false;
+            }
+        }
+        
+        // Limit complexity - no more than 10 quantifiers
+        if (preg_match_all('/[*+?{]/', $pattern) > 10) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Clear performance caches
+     */
+    public function clear_performance_cache() {
+        // Clear error statistics cache
+        delete_transient('cel_error_stats');
+        
+        // Clear login statistics caches (clear all login stat variations)
+        global $wpdb;
+        $wpdb->query(
+            "DELETE FROM {$wpdb->options} 
+             WHERE option_name LIKE '_transient_cel_login_stats_%' 
+             OR option_name LIKE '_transient_timeout_cel_login_stats_%'"
+        );
+        
+        return true;
+    }
+    
+    /**
+     * Get performance cache status
+     */
+    public function get_cache_status() {
+        $status = array();
+        
+        // Check error stats cache
+        $status['error_stats_cached'] = (get_transient('cel_error_stats') !== false);
+        
+        // Count login stats caches
+        global $wpdb;
+        $login_cache_count = $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->options} 
+             WHERE option_name LIKE '_transient_cel_login_stats_%'"
+        );
+        $status['login_stats_cache_count'] = (int)$login_cache_count;
+        
+        return $status;
     }
 }

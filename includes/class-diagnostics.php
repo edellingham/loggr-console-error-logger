@@ -154,7 +154,7 @@ class CEL_Diagnostics {
                 // Get system status
                 $.post(ajaxurl, {
                     action: 'cel_run_diagnostic',
-                    nonce: '<?php echo wp_create_nonce('cel_diagnostic_nonce'); ?>'
+                    nonce: '<?php echo wp_create_nonce('cel_admin_nonce'); ?>'
                 }, function(response) {
                     if (response.success) {
                         updateDiagnosticDisplay(response.data);
@@ -242,7 +242,7 @@ class CEL_Diagnostics {
                 // Send test error through pipeline
                 $.post(ajaxurl, {
                     action: 'cel_test_pipeline',
-                    nonce: '<?php echo wp_create_nonce('cel_diagnostic_nonce'); ?>',
+                    nonce: '<?php echo wp_create_nonce('cel_admin_nonce'); ?>',
                     test_data: JSON.stringify(testError)
                 }, function(response) {
                     let html = '<div class="' + (response.success ? 'status-good' : 'status-bad') + '">';
@@ -311,7 +311,7 @@ class CEL_Diagnostics {
             setInterval(function() {
                 $.post(ajaxurl, {
                     action: 'cel_get_debug_info',
-                    nonce: '<?php echo wp_create_nonce('cel_diagnostic_nonce'); ?>'
+                    nonce: '<?php echo wp_create_nonce('cel_admin_nonce'); ?>'
                 }, function(response) {
                     if (response.success && response.data.new_entries) {
                         response.data.new_entries.forEach(function(entry) {
@@ -366,8 +366,14 @@ class CEL_Diagnostics {
      */
     public function handle_diagnostic_ajax() {
         // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'cel_diagnostic_nonce')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'cel_admin_nonce')) {
             wp_send_json_error(array('message' => 'Invalid nonce'));
+            return;
+        }
+        
+        // Check permissions
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
             return;
         }
         
@@ -375,7 +381,7 @@ class CEL_Diagnostics {
         
         // Run diagnostics
         $table_name = $this->database->get_table_name();
-        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name;
+        $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table_name)) === $table_name;
         
         $diagnostics = array(
             'plugin_version' => CEL_VERSION,
@@ -422,12 +428,25 @@ class CEL_Diagnostics {
      */
     public function handle_test_pipeline() {
         // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'cel_diagnostic_nonce')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'cel_admin_nonce')) {
             wp_send_json_error(array('message' => 'Nonce verification failed'));
             return;
         }
         
-        $test_data = json_decode(stripslashes($_POST['test_data']), true);
+        // Check permissions
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
+            return;
+        }
+        
+        // Validate payload size
+        $test_data_raw = wp_unslash($_POST['test_data'] ?? '');
+        if (strlen($test_data_raw) > 10240) {
+            wp_send_json_error(array('message' => 'Test data payload too large'));
+            return;
+        }
+        
+        $test_data = json_decode($test_data_raw, true);
         
         $results = array(
             'test_id' => $test_data['test_id'] ?? 'unknown',
@@ -443,9 +462,8 @@ class CEL_Diagnostics {
         if (!empty($test_data['error_type']) && !empty($test_data['error_message'])) {
             $results['validated'] = true;
             
-            // Process
-            $error_logger = new CEL_Error_Logger();
-            $processed_data = $error_logger->process_error_data($test_data);
+            // Process using public method
+            $processed_data = $this->process_error_data($test_data);
             
             if ($processed_data) {
                 $results['processed'] = true;
@@ -460,7 +478,7 @@ class CEL_Diagnostics {
                     global $wpdb;
                     $table_name = $this->database->get_table_name();
                     $found = $wpdb->get_var($wpdb->prepare(
-                        "SELECT id FROM $table_name WHERE error_message = %s ORDER BY id DESC LIMIT 1",
+                        "SELECT id FROM `{$table_name}` WHERE error_message = %s ORDER BY id DESC LIMIT 1",
                         $test_data['error_message']
                     ));
                     
@@ -493,8 +511,14 @@ class CEL_Diagnostics {
      * Get debug info for live updates
      */
     public function handle_get_debug_info() {
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'cel_diagnostic_nonce')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'cel_admin_nonce')) {
             wp_send_json_error(array('message' => 'Invalid nonce'));
+            return;
+        }
+        
+        // Check permissions
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
             return;
         }
         
@@ -505,20 +529,69 @@ class CEL_Diagnostics {
     }
     
     /**
-     * Make process_error_data method accessible for testing
+     * Process error data for diagnostics (public wrapper)
      */
     public function process_error_data($data) {
-        $error_logger = new CEL_Error_Logger();
-        return $this->call_private_method($error_logger, 'process_error_data', array($data));
+        // Map JavaScript error types to our categories
+        $error_type_map = array(
+            'error' => 'javascript_error',
+            'unhandledrejection' => 'unhandled_rejection',
+            'console.error' => 'console_error',
+            'console.warn' => 'console_warning',
+            'ajax_error' => 'ajax_error',
+            'fetch_error' => 'fetch_error',
+            'resource_error' => 'resource_error',
+            'login_timeout' => 'login_timeout',
+            'syntax_error' => 'javascript_error',
+            'type_error' => 'javascript_error',
+            'reference_error' => 'javascript_error',
+            'diagnostic_test' => 'diagnostic_test'
+        );
+        
+        // Normalize error type
+        $error_type = isset($data['error_type']) ? strtolower($data['error_type']) : 'unknown';
+        if (isset($error_type_map[$error_type])) {
+            $data['error_type'] = $error_type_map[$error_type];
+        }
+        
+        // Add essential server-side data
+        $data['user_agent'] = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
+        $data['page_url'] = isset($data['page_url']) ? $data['page_url'] : 
+                           (isset($_SERVER['HTTP_REFERER']) ? esc_url_raw(wp_unslash($_SERVER['HTTP_REFERER'])) : '');
+        $data['user_ip'] = $this->get_client_ip();
+        $data['timestamp'] = current_time('mysql');
+        
+        // Set login page flag
+        if (!isset($data['is_login_page'])) {
+            $data['is_login_page'] = strpos($data['page_url'], 'wp-login.php') !== false ? 1 : 0;
+        }
+        
+        // Generate session ID if not provided
+        if (!isset($data['session_id'])) {
+            $data['session_id'] = 'diag_' . md5($data['user_ip'] . date('Y-m-d H'));
+        }
+        
+        return $data;
     }
     
     /**
-     * Call private method via reflection for testing
+     * Get client IP address securely
      */
-    private function call_private_method($object, $method_name, $parameters = array()) {
-        $reflection = new ReflectionClass(get_class($object));
-        $method = $reflection->getMethod($method_name);
-        $method->setAccessible(true);
-        return $method->invokeArgs($object, $parameters);
+    private function get_client_ip() {
+        $ip_keys = array('HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'HTTP_CLIENT_IP', 'REMOTE_ADDR');
+        
+        foreach ($ip_keys as $key) {
+            if (isset($_SERVER[$key]) && !empty($_SERVER[$key])) {
+                $ips = explode(',', $_SERVER[$key]);
+                $ip = trim($ips[0]);
+                
+                // Validate IP address
+                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                    return sanitize_text_field($ip);
+                }
+            }
+        }
+        
+        return isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field($_SERVER['REMOTE_ADDR']) : '127.0.0.1';
     }
 }

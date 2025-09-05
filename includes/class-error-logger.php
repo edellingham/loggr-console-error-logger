@@ -43,8 +43,8 @@ class CEL_Error_Logger {
         $this->debug_log('AJAX request received', $_POST);
         
         // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'cel_log_error_nonce')) {
-            $this->debug_log('Nonce verification failed', array('nonce' => $_POST['nonce'] ?? 'not set'));
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'cel_admin_nonce')) {
+            $this->debug_log('Nonce verification failed', array('nonce' => sanitize_text_field(wp_unslash($_POST['nonce'] ?? 'not set'))));
             wp_send_json_error(array('message' => __('Invalid security token', 'console-error-logger')));
             return;
         }
@@ -56,11 +56,19 @@ class CEL_Error_Logger {
             return;
         }
         
+        // Validate payload size (max 50KB)
+        $error_data_raw = wp_unslash($_POST['error_data']);
+        if (strlen($error_data_raw) > 51200) {
+            $this->debug_log('Error data payload too large');
+            wp_send_json_error(array('message' => __('Error data payload too large', 'console-error-logger')));
+            return;
+        }
+        
         // Parse error data
-        $error_data = json_decode(wp_unslash($_POST['error_data']), true);
+        $error_data = json_decode($error_data_raw, true);
         
         if (!$error_data) {
-            $this->debug_log('Invalid JSON format', $_POST['error_data']);
+            $this->debug_log('Invalid JSON format', sanitize_text_field($error_data_raw));
             wp_send_json_error(array('message' => __('Invalid error data format', 'console-error-logger')));
             return;
         }
