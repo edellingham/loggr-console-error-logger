@@ -796,6 +796,142 @@ class CEL_Database {
     }
     
     /**
+     * Get login history for analytics
+     */
+    public function get_login_history($args = array()) {
+        $defaults = array(
+            'limit' => 50,
+            'offset' => 0,
+            'date_from' => '',
+            'date_to' => '',
+            'success_only' => false,
+            'failed_only' => false,
+            'user_id' => null,
+            'ip_address' => ''
+        );
+        
+        $args = wp_parse_args($args, $defaults);
+        
+        // Build WHERE clause for login events
+        $where = array("error_type IN ('login_success', 'login_failed_valid_user', 'login_failed_invalid_user', 'login_failed_empty')");
+        $prepare_values = array();
+        
+        if (!empty($args['date_from'])) {
+            $where[] = 'timestamp >= %s';
+            $prepare_values[] = $args['date_from'];
+        }
+        
+        if (!empty($args['date_to'])) {
+            $where[] = 'timestamp <= %s';
+            $prepare_values[] = $args['date_to'];
+        }
+        
+        if ($args['success_only']) {
+            $where[] = "error_type = 'login_success'";
+        } elseif ($args['failed_only']) {
+            $where[] = "error_type IN ('login_failed_valid_user', 'login_failed_invalid_user', 'login_failed_empty')";
+        }
+        
+        if (!empty($args['user_id'])) {
+            $where[] = 'user_id = %d';
+            $prepare_values[] = $args['user_id'];
+        }
+        
+        if (!empty($args['ip_address'])) {
+            $where[] = 'user_ip = %s';
+            $prepare_values[] = $args['ip_address'];
+        }
+        
+        $where_clause = implode(' AND ', $where);
+        
+        // Build query with user information
+        $query = "SELECT e.*, 
+                         u.display_name, u.user_login, u.user_email
+                  FROM {$this->table_name} e
+                  LEFT JOIN {$this->wpdb->users} u ON e.user_id = u.ID
+                  WHERE {$where_clause}
+                  ORDER BY e.timestamp DESC
+                  LIMIT %d OFFSET %d";
+        
+        $prepare_values[] = $args['limit'];
+        $prepare_values[] = $args['offset'];
+        
+        return $this->wpdb->get_results(
+            $this->wpdb->prepare($query, $prepare_values)
+        );
+    }
+    
+    /**
+     * Get login statistics for analytics
+     */
+    public function get_login_stats($date_from = '', $date_to = '') {
+        $where_date = '';
+        $prepare_values = array();
+        
+        if (!empty($date_from)) {
+            $where_date .= " AND timestamp >= %s";
+            $prepare_values[] = $date_from;
+        }
+        
+        if (!empty($date_to)) {
+            $where_date .= " AND timestamp <= %s";
+            $prepare_values[] = $date_to;
+        }
+        
+        $stats = array();
+        
+        // Total successful logins
+        $query = "SELECT COUNT(*) FROM {$this->table_name} WHERE error_type = 'login_success'{$where_date}";
+        if (!empty($prepare_values)) {
+            $stats['successful_logins'] = $this->wpdb->get_var($this->wpdb->prepare($query, $prepare_values));
+        } else {
+            $stats['successful_logins'] = $this->wpdb->get_var($query);
+        }
+        
+        // Total failed logins
+        $query = "SELECT COUNT(*) FROM {$this->table_name} WHERE error_type IN ('login_failed_valid_user', 'login_failed_invalid_user', 'login_failed_empty'){$where_date}";
+        if (!empty($prepare_values)) {
+            $stats['failed_logins'] = $this->wpdb->get_var($this->wpdb->prepare($query, $prepare_values));
+        } else {
+            $stats['failed_logins'] = $this->wpdb->get_var($query);
+        }
+        
+        // Failed logins by type
+        $query = "SELECT error_type, COUNT(*) as count FROM {$this->table_name} 
+                  WHERE error_type IN ('login_failed_valid_user', 'login_failed_invalid_user', 'login_failed_empty'){$where_date}
+                  GROUP BY error_type";
+        if (!empty($prepare_values)) {
+            $stats['failed_by_type'] = $this->wpdb->get_results($this->wpdb->prepare($query, $prepare_values));
+        } else {
+            $stats['failed_by_type'] = $this->wpdb->get_results($query);
+        }
+        
+        // Top IP addresses with failed attempts
+        $query = "SELECT user_ip, COUNT(*) as attempts FROM {$this->table_name} 
+                  WHERE error_type IN ('login_failed_valid_user', 'login_failed_invalid_user', 'login_failed_empty'){$where_date}
+                  GROUP BY user_ip ORDER BY attempts DESC LIMIT 10";
+        if (!empty($prepare_values)) {
+            $stats['top_failed_ips'] = $this->wpdb->get_results($this->wpdb->prepare($query, $prepare_values));
+        } else {
+            $stats['top_failed_ips'] = $this->wpdb->get_results($query);
+        }
+        
+        // Most targeted users (valid usernames with failed attempts)
+        $query = "SELECT e.user_id, u.user_login, COUNT(*) as attempts 
+                  FROM {$this->table_name} e
+                  LEFT JOIN {$this->wpdb->users} u ON e.user_id = u.ID
+                  WHERE e.error_type = 'login_failed_valid_user'{$where_date}
+                  GROUP BY e.user_id ORDER BY attempts DESC LIMIT 10";
+        if (!empty($prepare_values)) {
+            $stats['most_targeted_users'] = $this->wpdb->get_results($this->wpdb->prepare($query, $prepare_values));
+        } else {
+            $stats['most_targeted_users'] = $this->wpdb->get_results($query);
+        }
+        
+        return $stats;
+    }
+    
+    /**
      * Get client IP address
      */
     private function get_client_ip() {
